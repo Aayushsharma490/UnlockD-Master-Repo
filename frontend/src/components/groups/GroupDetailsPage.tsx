@@ -59,6 +59,7 @@ export const GroupDetailsPage: React.FC = () => {
   const [expenseDesc, setExpenseDesc] = useState('');
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expensePayer, setExpensePayer] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('Other');
   const [splitType, setSplitType] = useState<'equal' | 'custom'>('equal');
   const [customSplits, setCustomSplits] = useState<Record<string, string>>({});
   const [expLoading, setExpLoading] = useState(false);
@@ -163,12 +164,14 @@ export const GroupDetailsPage: React.FC = () => {
           description: expenseDesc,
           split_type: splitType,
           splits: splitType === 'custom' ? payloadSplits : undefined,
+          category: expenseCategory,
         }),
       });
 
       if (res.ok) {
         setExpenseDesc('');
         setExpenseAmount('');
+        setExpenseCategory('Other');
         setCustomSplits({});
         await fetchGroupDetails(); // Dynamic refresh
       } else {
@@ -424,7 +427,27 @@ export const GroupDetailsPage: React.FC = () => {
                 </select>
               </div>
 
-              <div className="flex flex-col gap-1.5 col-span-2">
+              <div className="flex flex-col gap-1.5 col-span-1">
+                <label htmlFor="exp-category" className="eyebrow">
+                  Category
+                </label>
+                <select
+                  id="exp-category"
+                  className="verdant-input"
+                  value={expenseCategory}
+                  onChange={(e) => setExpenseCategory(e.target.value)}
+                  disabled={expLoading}
+                >
+                  <option value="Food">Food</option>
+                  <option value="Transport">Transport</option>
+                  <option value="Shopping">Shopping</option>
+                  <option value="Bills">Bills</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5 col-span-1">
                 <label htmlFor="exp-split" className="eyebrow">
                   Split Type
                 </label>

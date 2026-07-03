@@ -237,17 +237,53 @@ router.post('/:id/expenses', (req, res) => {
       return res.status(400).json({ error: 'Invalid split_type.' });
     }
 
+    const expenseCategory = req.body.category || 'Other';
+
     // Insert expense and splits
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO expenses (id, group_id, paid_by, amount, description, split_type, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(expId, group.id, paid_by, amountPaise, description || null, split_type, createdAt);
+        INSERT INTO expenses (id, group_id, paid_by, amount, description, split_type, category, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(expId, group.id, paid_by, amountPaise, description || null, split_type, expenseCategory, createdAt);
 
       const insertSplit = db.prepare('INSERT INTO expense_splits (id, expense_id, member_id, amount_owed) VALUES (?, ?, ?, ?)');
       for (const s of computedSplits) {
         const splitId = 'spl_' + uuidv4().replace(/-/g, '').slice(0, 16);
         insertSplit.run(splitId, expId, s.member_id, s.amount_owed);
+      }
+
+      // INTEGRATION: Payer's own share counts as a real transaction against their budget
+      const payerMember = db.prepare('SELECT name FROM group_members WHERE id = ?').get(paid_by);
+      if (payerMember) {
+        const registeredUser = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(payerMember.name);
+        if (registeredUser) {
+          const userChecking = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(registeredUser.id);
+          if (userChecking) {
+            const payerSplit = computedSplits.find(s => s.member_id === paid_by);
+            const payerShareAmount = payerSplit ? payerSplit.amount_owed : 0;
+
+            if (payerShareAmount > 0) {
+              const txId = 'tx_exp_' + uuidv4().replace(/-/g, '').slice(0, 16);
+              const ikey = 'ikey_exp_' + uuidv4().replace(/-/g, '').slice(0, 16);
+
+              db.prepare(`
+                INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, source, created_at)
+                VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?, ?, 'app', ?)
+              `).run(
+                txId,
+                ikey,
+                userChecking.id,
+                'acc_ext_imported',
+                payerShareAmount,
+                expenseCategory,
+                'Group Expense Share',
+                description || 'Group Expense share',
+                `Group: ${group.name}`,
+                createdAt
+              );
+            }
+          }
+        }
       }
     })();
 
@@ -336,6 +372,51 @@ router.patch('/settlements/:id', (req, res) => {
     if (!group) return res.status(403).json({ error: 'Unauthorized.' });
 
     const paidAt = new Date().toISOString();
+
+    const settlementDetails = db.prepare(`
+      SELECT s.group_id, s.amount, s.from_member, s.to_member, g.name AS group_name,
+             gm_from.name AS from_name, gm_to.name AS to_name
+      FROM settlements s
+      JOIN groups g ON g.id = s.group_id
+      JOIN group_members gm_from ON gm_from.id = s.from_member
+      JOIN group_members gm_to ON gm_to.id = s.to_member
+      WHERE s.id = ?
+    `).get(req.params.id);
+
+    if (settlementDetails) {
+      const userFrom = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(settlementDetails.from_name);
+      const userTo = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(settlementDetails.to_name);
+
+      if (userFrom && userTo) {
+        const accFrom = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(userFrom.id);
+        const accTo = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(userTo.id);
+
+        if (accFrom && accTo) {
+          db.transaction(() => {
+            db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(settlementDetails.amount, accFrom.id);
+            db.prepare('UPDATE accounts SET balance = balance + ? WHERE id = ?').run(settlementDetails.amount, accTo.id);
+
+            const txId = 'tx_set_' + uuidv4().replace(/-/g, '').slice(0, 16);
+            const ikey = 'ikey_set_' + uuidv4().replace(/-/g, '').slice(0, 16);
+
+            db.prepare(`
+              INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, source, created_at)
+              VALUES (?, ?, ?, ?, ?, 'success', 'Settlement', 'Group Settlement', ?, ?, 'app', ?)
+            `).run(
+              txId,
+              ikey,
+              accFrom.id,
+              accTo.id,
+              settlementDetails.amount,
+              `Settled dues in group: ${settlementDetails.group_name}`,
+              settlementDetails.to_name,
+              paidAt
+            );
+          })();
+        }
+      }
+    }
+
     db.prepare("UPDATE settlements SET status = 'paid', paid_at = ? WHERE id = ?").run(paidAt, req.params.id);
 
     // Recompute settlements immediately (paid settlements reduce net balance)

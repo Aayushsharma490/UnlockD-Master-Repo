@@ -82,6 +82,7 @@ db.exec(`
     amount      INTEGER NOT NULL,       -- stored in paise
     description TEXT,
     split_type  TEXT NOT NULL CHECK(split_type IN ('equal', 'custom')),
+    category    TEXT DEFAULT 'Other',
     created_at  TEXT NOT NULL
   );
 
