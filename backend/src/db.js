@@ -1,8 +1,5 @@
 /**
  * db.js — Verdant Finance: SQLite database initialization
- *
- * Scopes accounts, transactions, and budgets to users. Seeds 5 realistic demo users
- * with preset accounts, transaction histories, and budgets on first boot.
  */
 
 import Database from 'better-sqlite3';
@@ -11,20 +8,13 @@ import { dirname, join } from 'path';
 import { mkdirSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Store the DB file in data/ so Docker volume mounts persist it
 const DATA_DIR = join(__dirname, '..', 'data');
 const DB_PATH = join(DATA_DIR, 'verdant.db');
 
-// Ensure the data directory exists before opening the database
 mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(DB_PATH);
-
-// Enable WAL mode for better concurrent performance
 db.pragma('journal_mode = WAL');
-
-// Enforce foreign key constraints
 db.pragma('foreign_keys = ON');
 
 // ─── Schema ────────────────────────────────────────────────────────────────
@@ -36,7 +26,7 @@ db.exec(`
     email         TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL,
-    preferences   TEXT DEFAULT '{"compact":false}' -- stores UI density, etc.
+    preferences   TEXT DEFAULT '{"compact":false}'
   );
 
   CREATE TABLE IF NOT EXISTS accounts (
@@ -68,17 +58,53 @@ db.exec(`
     UNIQUE(user_id, category, month)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_transactions_created_at
-    ON transactions(created_at DESC);
+  -- Bill Splitting Tables
+  CREATE TABLE IF NOT EXISTS groups (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
 
-  CREATE INDEX IF NOT EXISTS idx_transactions_idempotency
-    ON transactions(idempotency_key);
-    
-  CREATE INDEX IF NOT EXISTS idx_accounts_user
-    ON accounts(user_id);
+  CREATE TABLE IF NOT EXISTS group_members (
+    id       TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL
+  );
 
-  CREATE INDEX IF NOT EXISTS idx_budgets_user_month
-    ON budgets(user_id, month);
+  CREATE TABLE IF NOT EXISTS expenses (
+    id          TEXT PRIMARY KEY,
+    group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    paid_by     TEXT NOT NULL REFERENCES group_members(id) ON DELETE CASCADE,
+    amount      INTEGER NOT NULL,       -- stored in paise
+    description TEXT,
+    split_type  TEXT NOT NULL CHECK(split_type IN ('equal', 'custom')),
+    created_at  TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS expense_splits (
+    id          TEXT PRIMARY KEY,
+    expense_id  TEXT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+    member_id   TEXT NOT NULL REFERENCES group_members(id) ON DELETE CASCADE,
+    amount_owed INTEGER NOT NULL       -- stored in paise
+  );
+
+  CREATE TABLE IF NOT EXISTS settlements (
+    id          TEXT PRIMARY KEY,
+    group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    from_member TEXT NOT NULL REFERENCES group_members(id) ON DELETE CASCADE,
+    to_member   TEXT NOT NULL REFERENCES group_members(id) ON DELETE CASCADE,
+    amount      INTEGER NOT NULL,       -- stored in paise
+    status      TEXT NOT NULL CHECK(status IN ('pending', 'paid')) DEFAULT 'pending',
+    paid_at     TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
+  CREATE INDEX IF NOT EXISTS idx_budgets_user_month ON budgets(user_id, month);
+  CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+  CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
+  CREATE INDEX IF NOT EXISTS idx_settlements_group ON settlements(group_id);
 `);
 
 // ─── Seed Demo Users & Accounts ─────────────────────────────────────────────
@@ -88,8 +114,8 @@ const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
 if (userCount.count === 0) {
   console.log('🌱 Database is empty. Seeding 5 demo users with accounts, budgets, and transactions...');
 
-  // Pre-hashed 'password123' using bcrypt (10 rounds)
-  const HASHED_PASSWORD = '$2b$10$3EOebDLIX18WCsCPmLm1wuUBd3UcAGKy00RDaMcnzPS2EmD22tME.';
+  // Pre-hashed 'password123' using bcryptjs
+  const HASHED_PASSWORD = '$2b$10$V/NmfdvhCOqPvlATc/d2XOPlGFnJ4mWY7YhRfMUO9UM9hn/GFheiG';
 
   const insertUser = db.prepare(`
     INSERT INTO users (id, name, email, password_hash, created_at)
@@ -123,30 +149,26 @@ if (userCount.count === 0) {
     { id: 'usr_kabir', name: 'Kabir Sen', email: 'kabir@verdant.com' },
   ];
 
-  db.transaction(() => {
-    // Seed users
+  const runSeeding = db.transaction(() => {
     for (const u of demoUsers) {
       insertUser.run(u.id, u.name, u.email, HASHED_PASSWORD, now.toISOString());
 
-      // Create standard Checking and Savings accounts for each user
       const checkId = `acc_chk_${u.id.replace('usr_', '')}`;
       const saveId = `acc_svg_${u.id.replace('usr_', '')}`;
 
-      const checkingBalance = u.id === 'usr_arjun' ? 4250000 : u.id === 'usr_priya' ? 7820000 : 3100000;
-      const savingsBalance = u.id === 'usr_arjun' ? 11500000 : u.id === 'usr_priya' ? 24500000 : 8900000;
+      const checkingBalance = 20000000; // ₹2,00,000 in paise
+      const savingsBalance = 100000000; // ₹10,00,000 in paise
 
       insertAccount.run(checkId, 'Checking', checkingBalance, u.id);
       insertAccount.run(saveId, 'Savings', savingsBalance, u.id);
 
-      // Seed 2 budgets per user (Food and Entertainment) for the current month
       const foodBudgetId = `bud_food_${u.id.replace('usr_', '')}`;
       const entBudgetId = `bud_ent_${u.id.replace('usr_', '')}`;
 
-      insertBudget.run(foodBudgetId, u.id, 'Food', currentMonthStr, 1500000, now.toISOString()); // ₹15,000 limit
-      insertBudget.run(entBudgetId, u.id, 'Entertainment', currentMonthStr, 800000, now.toISOString()); // ₹8,000 limit
+      insertBudget.run(foodBudgetId, u.id, 'Food', currentMonthStr, 1500000, now.toISOString());
+      insertBudget.run(entBudgetId, u.id, 'Entertainment', currentMonthStr, 800000, now.toISOString());
     }
 
-    // Seed transaction ledger entries between seeded accounts
     const seedTransactions = [
       {
         id: 'seed_tx_1',
@@ -205,9 +227,51 @@ if (userCount.count === 0) {
       const timeStr = new Date(nowMs - tx.daysAgo * 24 * 60 * 60 * 1000).toISOString();
       insertTransaction.run(tx.id, ikey, tx.from, tx.to, tx.amount, tx.status, tx.category, tx.note, timeStr);
     }
-  })();
 
-  console.log('✅ Demo users, portfolios, budgets, and transactions seeded.');
+    // Seed a sample Group for Arjun to demonstrate Bill Splitting
+    const groupId = 'gp_trip2026';
+    db.prepare(`
+      INSERT INTO groups (id, name, created_by, created_at)
+      VALUES (?, 'Goa Cultivation Trip', 'usr_arjun', ?)
+    `).run(groupId, now.toISOString());
+
+    const members = [
+      { id: 'gpm_arjun', name: 'Arjun Mehta' },
+      { id: 'gpm_priya', name: 'Priya Sharma' },
+      { id: 'gpm_rohit', name: 'Rohit Kapoor' },
+    ];
+
+    const insertMem = db.prepare('INSERT INTO group_members (id, group_id, name) VALUES (?, ?, ?)');
+    for (const m of members) {
+      insertMem.run(m.id, groupId, m.name);
+    }
+
+    // Seed a sample expense: Arjun paid ₹6,000 for Villa Rental split equally
+    const expId = 'exp_villa';
+    db.prepare(`
+      INSERT INTO expenses (id, group_id, paid_by, amount, description, split_type, created_at)
+      VALUES (?, ?, 'gpm_arjun', 600000, 'Villa Booking', 'equal', ?)
+    `).run(expId, groupId, now.toISOString());
+
+    const insertSplit = db.prepare('INSERT INTO expense_splits (id, expense_id, member_id, amount_owed) VALUES (?, ?, ?, ?)');
+    insertSplit.run('spl_1', expId, 'gpm_arjun', 200000);
+    insertSplit.run('spl_2', expId, 'gpm_priya', 200000);
+    insertSplit.run('spl_3', expId, 'gpm_rohit', 200000);
+
+    // Run optimization
+    const insertSettlement = db.prepare(`
+      INSERT INTO settlements (id, group_id, from_member, to_member, amount, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `);
+    // Greedy algorithm results for: Arjun paid 6000, owed 2000. Priya owed 2000, Rohit owed 2000.
+    // Priya owes Arjun 2000, Rohit owes Arjun 2000.
+    insertSettlement.run('set_seed_1', groupId, 'gpm_priya', 'gpm_arjun', 200000);
+    insertSettlement.run('set_seed_2', groupId, 'gpm_rohit', 'gpm_arjun', 200000);
+  });
+
+  runSeeding();
+
+  console.log('✅ Demo users, portfolios, budgets, transactions, and group seeds successfully added.');
 }
 
 export default db;

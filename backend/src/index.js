@@ -2,7 +2,7 @@
  * index.js — Verdant Finance Express Entrypoint
  *
  * Boots the server, initializes SQLite tables, and registers
- * routing layers for auth, accounts, transactions, budgets, and user profiles.
+ * routing layers for auth, accounts, transactions, budgets, groups, and user profiles.
  */
 
 import express from 'express';
@@ -14,6 +14,7 @@ import accountsRouter from './routes/accounts.js';
 import transactionsRouter from './routes/transactions.js';
 import usersRouter from './routes/users.js';
 import budgetsRouter from './routes/budgets.js';
+import groupsRouter from './routes/groups.js';
 
 // Import db to trigger database schema creation
 import './db.js';
@@ -44,6 +45,7 @@ app.use('/api/accounts', accountsRouter);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/budgets', budgetsRouter);
+app.use('/api/groups', groupsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -2,7 +2,7 @@
  * App.tsx — Verdant Finance Route Orchestrator
  *
  * Configures React Router routes for public auth forms and
- * protected dashboard, transactions, budgets, and settings layouts.
+ * protected dashboard, transactions, budgets, settings, and cooperative groups layouts.
  */
 
 import { useState, useEffect } from 'react';
@@ -22,6 +22,8 @@ import ResetPassword from './components/auth/ResetPassword';
 import DashboardPage from './components/dashboard/DashboardPage';
 import TransactionsPage from './components/transactions/TransactionsPage';
 import BudgetsPage from './components/budgets/BudgetsPage';
+import GroupsPage from './components/groups/GroupsPage';
+import GroupDetailsPage from './components/groups/GroupDetailsPage';
 import Settings from './components/settings/Settings';
 
 // Layout & Modals
@@ -160,6 +162,22 @@ function MainAppRoutes() {
             element={
               <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
                 <BudgetsPage />
+              </AppShell>
+            }
+          />
+          <Route
+            path="/groups"
+            element={
+              <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
+                <GroupsPage />
+              </AppShell>
+            }
+          />
+          <Route
+            path="/groups/:id"
+            element={
+              <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
+                <GroupDetailsPage />
               </AppShell>
             }
           />

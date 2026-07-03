@@ -55,7 +55,11 @@ export function useLenis(): void {
     ScrollTrigger.addEventListener('refresh', () => lenis.resize());
     ScrollTrigger.refresh();
 
+    // Expose lenis instance globally so modals can disable background scrolling
+    (window as any).lenis = lenis;
+
     return () => {
+      (window as any).lenis = undefined;
       lenis.destroy();
       gsap.ticker.remove(lenis.raf);
       ScrollTrigger.removeEventListener('refresh', () => lenis.resize());

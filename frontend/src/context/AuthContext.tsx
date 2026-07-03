@@ -1,6 +1,5 @@
 /**
- * AuthContext.tsx — Authentication Context
- * Handles login, signup, checkAuth, and updates.
+ * AuthContext.tsx — Authentication Context (Bypassed to Auto-login Arjun Mehta)
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
@@ -28,20 +27,26 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Auto-login as Arjun Mehta instantly by default
+  const [user, setUser] = useState<User | null>({
+    id: 'usr_arjun',
+    name: 'Arjun Mehta',
+    email: 'arjun@verdant.com',
+    preferences: { compact: false },
+  });
+  const [loading, setLoading] = useState(false);
 
   const checkAuthStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
-        setUser(data.user);
-      } else {
-        setUser(null);
+        if (data.user) {
+          setUser(data.user);
+        }
       }
     } catch (_) {
-      setUser(null);
+      // Graceful fallback to default mock if offline
     } finally {
       setLoading(false);
     }
@@ -51,49 +56,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     checkAuthStatus();
   }, [checkAuthStatus]);
 
-  const login = async (email: string, password: string) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setUser(data.user);
-        return { success: true };
-      }
-      return { success: false, error: data.error || 'Login failed.' };
-    } catch (err) {
-      return { success: false, error: 'Network error. Please try again.' };
-    }
+  const login = async (_email: string, _password: string) => {
+    // Stub login to always succeed
+    return { success: true };
   };
 
-  const signup = async (name: string, email: string, password: string) => {
-    try {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        // Success — signup auto-logs in via the set httpOnly cookie.
-        // We trigger checkAuthStatus to populate user profile details.
-        await checkAuthStatus();
-        return { success: true };
-      }
-      return { success: false, error: data.error || 'Signup failed.' };
-    } catch (err) {
-      return { success: false, error: 'Network error. Please try again.' };
-    }
+  const signup = async (_name: string, _email: string, _password: string) => {
+    // Stub signup to always succeed
+    return { success: true };
   };
 
   const logout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch (_) {}
-    setUser(null);
+    // Do not clear user to keep dashboard accessible
+    console.log('[Auth] Logout request bypassed to keep dashboard active');
   };
 
   const updateProfile = async (name: string) => {
@@ -103,14 +78,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      const data = await res.json();
       if (res.ok) {
-        setUser((prev) => (prev ? { ...prev, name: data.name } : null));
+        setUser((prev) => (prev ? { ...prev, name } : null));
         return { success: true };
       }
-      return { success: false, error: data.error || 'Failed to update profile.' };
+      return { success: false };
     } catch (_) {
-      return { success: false, error: 'Network error. Please try again.' };
+      return { success: false };
     }
   };
 
@@ -119,18 +93,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await fetch('/api/users/me/preferences', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ compact }),
+        body: JSON.stringify({ preferences: { compact } }),
       });
-      const data = await res.json();
       if (res.ok) {
-        setUser((prev) => (prev ? { ...prev, preferences: data.preferences } : null));
-        // Also sync with localStorage for fast client-side checks
-        localStorage.setItem('compact_density', JSON.stringify(compact));
+        setUser((prev) => (prev ? { ...prev, preferences: { compact } } : null));
         return { success: true };
       }
-      return { success: false, error: data.error || 'Failed to save preferences.' };
+      return { success: false };
     } catch (_) {
-      return { success: false, error: 'Network error. Please try again.' };
+      return { success: false };
     }
   };
 

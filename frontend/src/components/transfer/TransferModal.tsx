@@ -53,14 +53,19 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 }) => {
   const isDesktop = useIsDesktop();
 
-  // Prevent body scroll when modal is open
+  // Prevent body scroll and Lenis scroll when modal is open
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      if ((window as any).lenis) (window as any).lenis.stop();
     } else {
       document.body.style.overflow = '';
+      if ((window as any).lenis) (window as any).lenis.start();
     }
-    return () => { document.body.style.overflow = ''; };
+    return () => {
+      document.body.style.overflow = '';
+      if ((window as any).lenis) (window as any).lenis.start();
+    };
   }, [isOpen]);
 
   // Desktop modal styles
