@@ -1,111 +1,361 @@
+/**
+ * index.css — Verdant Finance: Global design system
+ *
+ * Built on Tailwind CSS v4 with @theme for custom tokens.
+ * All brand colors are CSS custom properties so they can be
+ * retuned at the top of this file without touching components.
+ */
+
+@import "tailwindcss";
+
+/* ─── Brand tokens ─────────────────────────────────────────────────────────── */
+/* These are the ONLY place colors are defined. Components consume them via
+   Tailwind utilities or CSS variables — never hardcoded hex values. */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* Core palette */
+  --color-bg:       #FAF7F2;   /* warm ivory — page background */
+  --color-text:     #1C1B19;   /* near-black charcoal — primary text */
+  --color-green:    #2F4F3E;   /* deep forest green — positive / CTA */
+  --color-terra:    #B5533C;   /* muted terracotta — alert / negative */
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Derived tokens */
+  --color-green-light:  rgba(47, 79, 62, 0.08);
+  --color-terra-light:  rgba(181, 83, 60, 0.08);
+  --color-text-muted:   rgba(28, 27, 25, 0.5);
+  --color-text-faint:   rgba(28, 27, 25, 0.3);
+  --color-border:       rgba(28, 27, 25, 0.08);
+  --color-border-mid:   rgba(28, 27, 25, 0.12);
+  --color-surface:      rgba(255, 255, 255, 0.55);
+  --color-surface-hover: rgba(255, 255, 255, 0.75);
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Typography */
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-ui:      'Inter', system-ui, sans-serif;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  /* Shadows — long-throw, soft, never harsh */
+  --shadow-sm:  0 1px 3px rgba(28, 27, 25, 0.04), 0 1px 2px rgba(28, 27, 25, 0.04);
+  --shadow-md:  0 4px 24px rgba(28, 27, 25, 0.06), 0 1px 4px rgba(28, 27, 25, 0.04);
+  --shadow-lg:  0 16px 48px rgba(28, 27, 25, 0.08), 0 4px 12px rgba(28, 27, 25, 0.04);
+  --shadow-xl:  0 24px 64px rgba(28, 27, 25, 0.10), 0 8px 20px rgba(28, 27, 25, 0.05);
+
+  /* Transitions */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast:   150ms;
+  --duration-normal: 250ms;
+  --duration-slow:   400ms;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+/* ─── Tailwind theme extension ─────────────────────────────────────────────── */
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+@theme {
+  --color-bg:           #FAF7F2;
+  --color-text-primary: #1C1B19;
+  --color-green:        #2F4F3E;
+  --color-terra:        #B5533C;
+  --color-surface:      rgba(255, 255, 255, 0.55);
+  --color-border:       rgba(28, 27, 25, 0.08);
+
+  --font-family-display: 'Instrument Serif', Georgia, serif;
+  --font-family-ui:      'Inter', system-ui, sans-serif;
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+/* ─── Base reset ───────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: auto; /* Lenis handles smooth scrolling */
 }
 
 body {
   margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
   font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Prevent layout shift from scrollbar appearing */
+  overflow-y: scroll;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* ─── Typography scale ─────────────────────────────────────────────────────── */
+
+.font-display      { font-family: var(--font-display); }
+.font-ui           { font-family: var(--font-ui); }
+
+/* Balance figures — editorial, premium feel */
+.balance-figure {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--color-text);
+}
+
+/* Section eyebrows — generous tracking, muted */
+.eyebrow {
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;  /* 11px */
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ─── Glass card utility ───────────────────────────────────────────────────── */
+
+.glass-card {
+  background: var(--color-surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+  border-radius: 16px;
+}
+
+.glass-card-hover {
+  transition: background var(--duration-normal) var(--ease-smooth),
+              box-shadow var(--duration-normal) var(--ease-smooth),
+              transform var(--duration-normal) var(--ease-smooth);
+}
+
+.glass-card-hover:hover {
+  background: var(--color-surface-hover);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ─── Ambient background aura ──────────────────────────────────────────────── */
+/* Slow-drifting radial gradients behind all content — organic, not flashy */
+
+.ambient-glow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ambient-glow::before,
+.ambient-glow::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.07;
+}
+
+/* Green aura — top-left */
+.ambient-glow::before {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, #2F4F3E 0%, transparent 70%);
+  top: -150px;
+  left: -100px;
+  animation: drift-a 18s ease-in-out infinite alternate;
+}
+
+/* Terracotta aura — bottom-right */
+.ambient-glow::after {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, #B5533C 0%, transparent 70%);
+  bottom: -100px;
+  right: -80px;
+  animation: drift-b 22s ease-in-out infinite alternate;
+}
+
+@keyframes drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(60px, 40px) scale(1.1); }
+}
+
+@keyframes drift-b {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(-50px, -30px) scale(0.95); }
+}
+
+/* ─── Status badge utilities ───────────────────────────────────────────────── */
+
+.badge-success {
+  background: var(--color-green-light);
+  color: var(--color-green);
+  border: 1px solid rgba(47, 79, 62, 0.15);
+}
+
+.badge-pending {
+  background: rgba(28, 27, 25, 0.06);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.badge-failed {
+  background: var(--color-terra-light);
+  color: var(--color-terra);
+  border: 1px solid rgba(181, 83, 60, 0.15);
+}
+
+/* ─── Form elements ────────────────────────────────────────────────────────── */
+
+.verdant-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--color-border-mid);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  color: var(--color-text);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease-smooth),
+              box-shadow var(--duration-fast) var(--ease-smooth),
+              background var(--duration-fast) var(--ease-smooth);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.verdant-input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.verdant-input:focus {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: var(--color-green);
+  box-shadow: 0 0 0 3px rgba(47, 79, 62, 0.1);
+}
+
+.verdant-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Select arrow */
+select.verdant-input {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%231C1B19' stroke-opacity='0.4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+/* ─── CTA button ────────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--color-green);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 13px 24px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-smooth),
+              transform var(--duration-fast) var(--ease-spring),
+              box-shadow var(--duration-fast) var(--ease-smooth);
+  box-shadow: 0 1px 3px rgba(47, 79, 62, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #3a5f4c;
+  box-shadow: 0 4px 12px rgba(47, 79, 62, 0.35), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 1px 4px rgba(47, 79, 62, 0.25);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-mid);
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255,255,255,0.6);
+  border-color: rgba(28, 27, 25, 0.2);
+  color: var(--color-text);
+}
+
+/* ─── Scrollbar (subtle, matches palette) ──────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(28, 27, 25, 0.12);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 27, 25, 0.2);
+}
+
+/* ─── Utility animations ───────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s var(--ease-smooth) both;
+}
+
+/* Skeleton loading pulse */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+
+/* ─── GSAP reveal targets ─────────────────────────────────────────────────── */
+/* Initial state for scroll-triggered reveals — GSAP sets these back */
+
+.gsap-reveal {
+  opacity: 0;
+  transform: translateY(20px);
 }
