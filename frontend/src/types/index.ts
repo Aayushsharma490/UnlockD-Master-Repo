@@ -30,6 +30,8 @@ export interface Transaction {
   status: TransactionStatus;
   category?: string;
   note: string | null;
+  description?: string | null;
+  merchant?: string | null;
   created_at: string; // ISO 8601
   idempotency_key?: string | null;
 }

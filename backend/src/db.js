@@ -45,6 +45,8 @@ db.exec(`
     status          TEXT NOT NULL CHECK(status IN ('pending', 'success', 'failed')),
     category        TEXT DEFAULT 'Uncategorized',
     note            TEXT,
+    description     TEXT,
+    merchant        TEXT,
     created_at      TEXT NOT NULL
   );
 
@@ -100,6 +102,10 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_tx_from_date ON transactions(from_account, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_tx_to_date ON transactions(to_account, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_tx_category ON transactions(category);
+  CREATE INDEX IF NOT EXISTS idx_tx_merchant ON transactions(merchant);
   CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
   CREATE INDEX IF NOT EXISTS idx_budgets_user_month ON budgets(user_id, month);
   CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
@@ -128,8 +134,8 @@ if (userCount.count === 0) {
   `);
 
   const insertTransaction = db.prepare(`
-    INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertBudget = db.prepare(`
@@ -178,6 +184,8 @@ if (userCount.count === 0) {
         status: 'success',
         category: 'Shopping',
         note: 'SIP savings sweep',
+        description: 'SIP Auto Investment',
+        merchant: 'Groww Mutual Funds',
         daysAgo: 10,
       },
       {
@@ -188,6 +196,8 @@ if (userCount.count === 0) {
         status: 'success',
         category: 'Food',
         note: 'Split dinner bill',
+        description: 'Dinner Splitting',
+        merchant: 'Social Restaurant',
         daysAgo: 7,
       },
       {
@@ -198,6 +208,8 @@ if (userCount.count === 0) {
         status: 'success',
         category: 'Food',
         note: 'Office lunch pool',
+        description: 'Lunch with colleagues',
+        merchant: 'Kitchens of India',
         daysAgo: 4,
       },
       {
@@ -208,6 +220,8 @@ if (userCount.count === 0) {
         status: 'success',
         category: 'Bills',
         note: 'Quarterly yield payout',
+        description: 'Quarterly Dividends',
+        merchant: 'HDFC Securities',
         daysAgo: 3,
       },
       {
@@ -218,6 +232,8 @@ if (userCount.count === 0) {
         status: 'success',
         category: 'Entertainment',
         note: 'Gifts share',
+        description: 'Birthday Celebrations',
+        merchant: 'BookMyShow',
         daysAgo: 1,
       },
     ];
@@ -225,7 +241,7 @@ if (userCount.count === 0) {
     for (const tx of seedTransactions) {
       const ikey = `seed_ikey_${tx.id}`;
       const timeStr = new Date(nowMs - tx.daysAgo * 24 * 60 * 60 * 1000).toISOString();
-      insertTransaction.run(tx.id, ikey, tx.from, tx.to, tx.amount, tx.status, tx.category, tx.note, timeStr);
+      insertTransaction.run(tx.id, ikey, tx.from, tx.to, tx.amount, tx.status, tx.category, tx.note, tx.description || null, tx.merchant || null, timeStr);
     }
 
     // Seed a sample Group for Arjun to demonstrate Bill Splitting
