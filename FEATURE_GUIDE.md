@@ -124,15 +124,56 @@ A: The optimistic balance is a client-side guess: `currentBalance - amount`. The
 
 ---
 
-## Round 1 — Feature 2: [add once revealed]
+## Round 1 — Feature 2: Smart Budgeting
 
-**What it does:**
+### What it does
+Live-computed budget tracking with zero manual/cron monthly reset jobs:
+- Set and update limits inline per category (`Food`, `Transport`, `Shopping`, `Bills`, `Entertainment`, `Other`).
+- Dynamic progress indicators that change colors depending on utilization (green < 80%, orange/sandy warning >= 80%, terracotta >= 100%).
+- Dashboard integration showing top 3 categories closest to limit.
+- Real-time floating toast/banner notification when a transaction crosses 80% or 100% of a category budget.
+- Automatic full synchronization on modal closure (re-fetching accounts, transactions, and budgets).
 
-**How it was built:**
+---
 
-**Files that matter:**
+### How it was built
 
-**Likely judge questions + answers:**
+**Backend:**
+- Added a `budgets` table with a `UNIQUE(user_id, category, month)` constraint in `backend/src/db.js`.
+- Added a `category` column to `transactions` table.
+- Utilization is computed live in SQLite aggregates inside `backend/src/routes/budgets.js` by joining user accounts and summing successful transactions for the current month. This naturally resets every month with zero extra logic since the query automatically groups transactions by the current `strftime('%Y-%m')` month.
+- The transfer creation route (`POST /api/transactions`) checks if the user has a budget limit for the transaction's category. If so, it returns a `budgetAlert` object containing the updated spent, limit, and percentUsed statistics.
+
+**Frontend:**
+- Created the `/budgets` page showing category envelopes. Clicking the pencil icon enters edit mode, allowing the user to update the limit inline.
+- The Transfer Form now requires selecting an expense category.
+- If a transaction response contains a `budgetAlert` crossing 80% or 100%, the root `App.tsx` renders a floating, auto-dismissing toast warning.
+- Clicking the Done/Dismiss button in the SuccessConfirmation modal calls `refetchAccounts()` and `refetchTransactions()` to synchronise the client state instantly.
+- The Dashboard layout displays accounts list and budget summaries side-by-side (3:2 ratio grid), showing the categories closest to their limit.
+
+---
+
+### Files that matter
+
+| File | What it does |
+|---|---|
+| `backend/src/routes/budgets.js` | Live computed budget aggregations and limit upserts |
+| `frontend/src/components/budgets/BudgetsPage.tsx` | Envelope budget settings list with inline limits edit |
+| `frontend/src/components/dashboard/DashboardPage.tsx` | Dashboard view with Side-by-side accounts and budgets summary grid |
+| `frontend/src/components/transfer/TransferForm.tsx` | Added required category select and budget toast triggers |
+| `frontend/src/App.tsx` | Added budgets router, global toast state, and done-refresh listeners |
+
+---
+
+### Likely judge questions + answers
+
+**Q: Why compute budget spent live instead of keeping a running total column in the budgets table?**
+
+A: Keeping a running total requires extra write steps, increases locking contention, and introduces data drift risks (e.g. if a transaction changes status or gets deleted). Live computation ensures the budget is always perfectly in sync with the transaction ledger. It also automatically "resets" at the turn of a new month because the aggregate query naturally filters transactions by the current `YYYY-MM` timestamp, eliminating the need for complex, bug-prone monthly cron jobs.
+
+**Q: How does the application avoid page flashes during balance updates?**
+
+A: It combines Optimistic UI with automatic background refetches on dismissal. As soon as the user hits "Transfer", the client instantly deducts the balance locally. When the user closes the modal by clicking "Done", the client silently runs background refetches to align the local state with the backend's authoritative database values.
 
 ---
 
@@ -145,3 +186,4 @@ A: The optimistic balance is a client-side guess: `currentBalance - amount`. The
 **Files that matter:**
 
 **Likely judge questions + answers:**
+
