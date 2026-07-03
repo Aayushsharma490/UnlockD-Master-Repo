@@ -6,6 +6,14 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db.js';
 import { authenticateUser } from '../middleware/auth.js';
+import { parse } from 'csv-parse/sync';
+import multer from 'multer';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = Router();
 
@@ -410,6 +418,180 @@ router.post('/', (req, res) => {
 
     console.error('[POST /api/transactions] Internal Transfer Error:', err);
     return res.status(500).json({ error: 'Transfer failed due to internal database error.' });
+  }
+});
+
+// ─── POST /api/transactions/import (CSV/PDF statement uploads) ───────────────
+router.post('/import', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  const fileBuffer = req.file.buffer;
+  const fileName = req.file.originalname.toLowerCase();
+  let parsedRows = [];
+
+  try {
+    if (fileName.endsWith('.csv')) {
+      const text = fileBuffer.toString('utf-8');
+      const records = parse(text, { columns: true, skip_empty_lines: true, trim: true });
+
+      for (const record of records) {
+        let dateVal = new Date().toISOString();
+        let description = 'Imported Transaction';
+        let merchant = 'External Merchant';
+        let amountVal = 0;
+
+        for (const [key, value] of Object.entries(record)) {
+          const normKey = key.toLowerCase();
+          const normVal = (value || '').trim();
+
+          if (normKey.includes('date')) {
+            const parsedDate = new Date(normVal);
+            if (!isNaN(parsedDate.getTime())) dateVal = parsedDate.toISOString();
+          } else if (normKey.includes('desc') || normKey.includes('note') || normKey.includes('memo') || normKey.includes('payee') || normKey.includes('name')) {
+            description = normVal || description;
+          } else if (normKey.includes('merch') || normKey.includes('shop') || normKey.includes('vendor')) {
+            merchant = normVal || merchant;
+          } else if (normKey.includes('amount') || normKey.includes('value') || normKey.includes('sum') || normKey.includes('price')) {
+            const cleaned = normVal.replace(/[^0-9.-]/g, '');
+            const parsedAmt = parseFloat(cleaned);
+            if (!isNaN(parsedAmt)) amountVal = parsedAmt;
+          }
+        }
+
+        if (amountVal > 0) {
+          parsedRows.push({
+            date: dateVal,
+            description,
+            merchant,
+            amount: amountVal,
+          });
+        }
+      }
+    } else if (fileName.endsWith('.pdf')) {
+      const data = await pdf(fileBuffer);
+      const text = data.text;
+      const lines = text.split('\n');
+
+      const dateRegex = /(\d{2}[-/.]\d{2}[-/.]\d{4})|(\d{4}[-/.]\d{2}[-/.]\d{2})/;
+      const amountRegex = /(?:INR|Rs\.?|₹)?\s*(-?\d+(?:\.\d{2})?)/;
+
+      for (const line of lines) {
+        const dateMatch = line.match(dateRegex);
+        if (dateMatch) {
+          const dateStr = dateMatch[0];
+          const lineWithoutDate = line.replace(dateStr, '');
+          const amountMatch = lineWithoutDate.match(amountRegex);
+          if (amountMatch) {
+            const amountVal = parseFloat(amountMatch[1]);
+            if (!isNaN(amountVal) && amountVal > 0) {
+              const desc = lineWithoutDate.replace(amountMatch[0], '').trim() || 'Imported Transaction';
+              const words = desc.split(/\s+/);
+              const merch = words.slice(0, 3).join(' ');
+
+              parsedRows.push({
+                date: new Date(dateStr).toISOString(),
+                description: desc,
+                merchant: merch || 'External Merchant',
+                amount: amountVal,
+              });
+            }
+          }
+        }
+      }
+    } else {
+      return res.status(400).json({ error: 'Unsupported file format. Please upload a CSV or PDF file.' });
+    }
+
+    if (parsedRows.length === 0) {
+      return res.status(400).json({ error: 'No valid transactions found in the file.' });
+    }
+
+    // Ensure external merchant account exists
+    const extAccount = db.prepare('SELECT id FROM accounts WHERE id = ?').get('acc_ext_imported');
+    if (!extAccount) {
+      db.prepare(`
+        INSERT INTO accounts (id, name, balance, user_id)
+        VALUES ('acc_ext_imported', 'External Merchant', 0, 'usr_priya')
+      `).run();
+    }
+
+    const userChecking = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(req.userId);
+    const targetAccountId = userChecking ? userChecking.id : `acc_chk_${req.userId.replace('usr_', '')}`;
+
+    let imported = 0;
+    let categorized = 0;
+    let uncategorized = 0;
+
+    const insertTransaction = db.prepare(`
+      INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, source, created_at)
+      VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?, ?, 'imported', ?)
+    `);
+
+    db.transaction(() => {
+      for (const row of parsedRows) {
+        const amountPaise = Math.round(row.amount * 100);
+        const textToMatch = `${row.description} ${row.merchant}`.toLowerCase();
+
+        let category = 'Uncategorized';
+        if (textToMatch.includes('zomato') || textToMatch.includes('swiggy') || textToMatch.includes('starbucks') || textToMatch.includes('mcdonald') || textToMatch.includes('social') || textToMatch.includes('restaurant') || textToMatch.includes('food') || textToMatch.includes('cafe') || textToMatch.includes('dining')) {
+          category = 'Food';
+        } else if (textToMatch.includes('uber') || textToMatch.includes('ola') || textToMatch.includes('rapido') || textToMatch.includes('metro') || textToMatch.includes('irctc') || textToMatch.includes('cab') || textToMatch.includes('auto') || textToMatch.includes('travel')) {
+          category = 'Transport';
+        } else if (textToMatch.includes('amazon') || textToMatch.includes('flipkart') || textToMatch.includes('myntra') || textToMatch.includes('zara') || textToMatch.includes('reliance') || textToMatch.includes('shopper') || textToMatch.includes('mall') || textToMatch.includes('retail')) {
+          category = 'Shopping';
+        } else if (textToMatch.includes('electricity') || textToMatch.includes('mobile') || textToMatch.includes('jio') || textToMatch.includes('airtel') || textToMatch.includes('broadband') || textToMatch.includes('rent') || textToMatch.includes('insurance') || textToMatch.includes('recharge')) {
+          category = 'Bills';
+        } else if (textToMatch.includes('netflix') || textToMatch.includes('spotify') || textToMatch.includes('movie') || textToMatch.includes('bookmyshow') || textToMatch.includes('theater') || textToMatch.includes('game') || textToMatch.includes('fun')) {
+          category = 'Entertainment';
+        }
+
+        if (category === 'Uncategorized') {
+          uncategorized++;
+        } else {
+          categorized++;
+        }
+
+        const txnId = 'tx_imp_' + uuidv4().replace(/-/g, '').slice(0, 16);
+        const ikey = 'ikey_imp_' + uuidv4().replace(/-/g, '').slice(0, 16);
+
+        let transactionDate = new Date();
+        if (row.date) {
+          const parsed = new Date(row.date);
+          if (!isNaN(parsed.getTime())) {
+            const now = new Date();
+            parsed.setFullYear(now.getFullYear());
+            parsed.setMonth(now.getMonth());
+            transactionDate = parsed;
+          }
+        }
+
+        insertTransaction.run(
+          txnId,
+          ikey,
+          targetAccountId,
+          'acc_ext_imported',
+          amountPaise,
+          category,
+          'CSV/PDF Import',
+          row.description,
+          row.merchant,
+          transactionDate.toISOString()
+        );
+        imported++;
+      }
+    })();
+
+    res.json({
+      success: true,
+      imported,
+      categorized,
+      uncategorized,
+    });
+  } catch (err) {
+    console.error('[POST /api/transactions/import] Error:', err);
+    res.status(500).json({ error: 'Failed to parse file. Make sure columns match Date, Description, and Amount.' });
   }
 });
 

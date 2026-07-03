@@ -13,9 +13,12 @@
     "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "csv-parse": "^7.0.1",
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
+    "pdf-parse": "^2.4.5",
     "uuid": "^14.0.0"
   },
   "devDependencies": {

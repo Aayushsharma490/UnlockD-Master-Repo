@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowLeftRight, Settings, PieChart, Users } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Settings, PieChart, Users, TrendingUp } from 'lucide-react';
 import { VerdantLogo } from '../brand/VerdantLogo';
 import { useAuth } from '../../context/AuthContext';
 
@@ -31,6 +31,11 @@ export const Sidebar: React.FC = () => {
       to: '/groups',
       label: 'Split Bills',
       icon: <Users size={18} strokeWidth={1.75} />,
+    },
+    {
+      to: '/analytics',
+      label: 'Analytics',
+      icon: <TrendingUp size={18} strokeWidth={1.75} />,
     },
     {
       to: '/settings',

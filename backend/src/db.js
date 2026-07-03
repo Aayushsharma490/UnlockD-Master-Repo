@@ -47,6 +47,7 @@ db.exec(`
     note            TEXT,
     description     TEXT,
     merchant        TEXT,
+    source          TEXT DEFAULT 'app',
     created_at      TEXT NOT NULL
   );
 
@@ -175,6 +176,12 @@ if (userCount.count === 0) {
       insertBudget.run(entBudgetId, u.id, 'Entertainment', currentMonthStr, 800000, now.toISOString());
     }
 
+    // Seed external merchant account for outgoing imported/direct transactions
+    db.prepare(`
+      INSERT INTO accounts (id, name, balance, user_id)
+      VALUES ('acc_ext_imported', 'External Merchant', 0, 'usr_priya')
+    `).run();
+
     const seedTransactions = [
       {
         id: 'seed_tx_1',
@@ -186,7 +193,7 @@ if (userCount.count === 0) {
         note: 'SIP savings sweep',
         description: 'SIP Auto Investment',
         merchant: 'Groww Mutual Funds',
-        daysAgo: 10,
+        daysAgo: 14,
       },
       {
         id: 'seed_tx_2',
@@ -198,7 +205,7 @@ if (userCount.count === 0) {
         note: 'Split dinner bill',
         description: 'Dinner Splitting',
         merchant: 'Social Restaurant',
-        daysAgo: 7,
+        daysAgo: 13,
       },
       {
         id: 'seed_tx_3',
@@ -210,7 +217,7 @@ if (userCount.count === 0) {
         note: 'Office lunch pool',
         description: 'Lunch with colleagues',
         merchant: 'Kitchens of India',
-        daysAgo: 4,
+        daysAgo: 12,
       },
       {
         id: 'seed_tx_4',
@@ -222,7 +229,7 @@ if (userCount.count === 0) {
         note: 'Quarterly yield payout',
         description: 'Quarterly Dividends',
         merchant: 'HDFC Securities',
-        daysAgo: 3,
+        daysAgo: 11,
       },
       {
         id: 'seed_tx_5',
@@ -234,8 +241,128 @@ if (userCount.count === 0) {
         note: 'Gifts share',
         description: 'Birthday Celebrations',
         merchant: 'BookMyShow',
+        daysAgo: 10,
+      },
+      {
+        id: 'seed_tx_6',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 89900,
+        status: 'success',
+        category: 'Shopping',
+        note: 'Bought wireless earbuds',
+        description: 'Electronics Purchase',
+        merchant: 'Amazon India',
+        daysAgo: 9,
+      },
+      {
+        id: 'seed_tx_7',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 45000,
+        status: 'success',
+        category: 'Transport',
+        note: 'Weekly ride back home',
+        description: 'Cab Ride',
+        merchant: 'Uber Rides',
+        daysAgo: 8,
+      },
+      {
+        id: 'seed_tx_8',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 125000,
+        status: 'success',
+        category: 'Bills',
+        note: 'Electricity payment',
+        description: 'Electricity Bill',
+        merchant: 'BSES Rajdhani',
+        daysAgo: 7,
+      },
+      {
+        id: 'seed_tx_9',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 64900,
+        status: 'success',
+        category: 'Entertainment',
+        note: 'Monthly video streaming',
+        description: 'Netflix Monthly Premium',
+        merchant: 'Netflix India',
+        daysAgo: 6,
+      },
+      {
+        id: 'seed_tx_10',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 32000,
+        status: 'success',
+        category: 'Food',
+        note: 'Pizza party',
+        description: 'Office Snacks Order',
+        merchant: 'Dominoes Pizza',
+        daysAgo: 5,
+      },
+      {
+        id: 'seed_tx_11',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 150000,
+        status: 'success',
+        category: 'Shopping',
+        note: 'Casual sneakers',
+        description: 'Sneaker Shopping',
+        merchant: 'Myntra Retail',
+        daysAgo: 4,
+      },
+      {
+        id: 'seed_tx_12',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 11900,
+        status: 'success',
+        category: 'Entertainment',
+        note: 'Music streaming subscription',
+        description: 'Spotify Premium Family',
+        merchant: 'Spotify Premium',
+        daysAgo: 3,
+      },
+      {
+        id: 'seed_tx_13',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 120000,
+        status: 'success',
+        category: 'Other',
+        note: 'Hardware tools',
+        description: 'Home Improvement Tools',
+        merchant: 'Ace Hardware',
+        daysAgo: 2,
+      },
+      {
+        id: 'seed_tx_14',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 45000,
+        status: 'success',
+        category: 'Food',
+        note: 'Burgers dinner',
+        description: 'Gourmet Burger Dining',
+        merchant: 'Burger Singh',
         daysAgo: 1,
       },
+      {
+        id: 'seed_tx_15',
+        from: 'acc_chk_arjun',
+        to: 'acc_ext_imported',
+        amount: 22000,
+        status: 'success',
+        category: 'Transport',
+        note: 'Airport shuttle',
+        description: 'Airport Ride',
+        merchant: 'MakeMyTrip Cabs',
+        daysAgo: 0,
+      }
     ];
 
     for (const tx of seedTransactions) {

@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowLeftRight, Settings, PieChart, Users } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Settings, PieChart, Users, TrendingUp } from 'lucide-react';
 
 export const BottomNav: React.FC = () => {
   const BOTTOM_NAV_ITEMS = [
@@ -27,6 +27,11 @@ export const BottomNav: React.FC = () => {
       to: '/groups',
       label: 'Split',
       icon: <Users size={20} strokeWidth={1.75} />,
+    },
+    {
+      to: '/analytics',
+      label: 'Analytics',
+      icon: <TrendingUp size={20} strokeWidth={1.75} />,
     },
     {
       to: '/settings',

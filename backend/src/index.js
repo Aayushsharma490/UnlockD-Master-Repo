@@ -15,6 +15,7 @@ import transactionsRouter from './routes/transactions.js';
 import usersRouter from './routes/users.js';
 import budgetsRouter from './routes/budgets.js';
 import groupsRouter from './routes/groups.js';
+import analyticsRouter from './routes/analytics.js';
 
 // Import db to trigger database schema creation
 import './db.js';
@@ -46,6 +47,7 @@ app.use('/api/transactions', transactionsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/budgets', budgetsRouter);
 app.use('/api/groups', groupsRouter);
+app.use('/api/analytics', analyticsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

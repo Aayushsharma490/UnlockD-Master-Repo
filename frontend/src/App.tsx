@@ -25,6 +25,7 @@ import BudgetsPage from './components/budgets/BudgetsPage';
 import GroupsPage from './components/groups/GroupsPage';
 import GroupDetailsPage from './components/groups/GroupDetailsPage';
 import Settings from './components/settings/Settings';
+import AnalyticsPage from './components/analytics/AnalyticsPage';
 
 // Layout & Modals
 import AppShell from './components/layout/AppShell';
@@ -178,6 +179,14 @@ function MainAppRoutes() {
             element={
               <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
                 <GroupDetailsPage />
+              </AppShell>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
+                <AnalyticsPage />
               </AppShell>
             }
           />
