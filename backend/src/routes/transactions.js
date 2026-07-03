@@ -1,5 +1,5 @@
 /**
- * transactions.js — User-scoped, atomic transfer router
+ * transactions.js — User-scoped, atomic transfer router with budget hooks
  */
 
 import { Router } from 'express';
@@ -11,6 +11,8 @@ const router = Router();
 
 // Apply auth check
 router.use(authenticateUser);
+
+const ALLOWED_CATEGORIES = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Other', 'Uncategorized'];
 
 // ─── GET /api/transactions ──────────────────────────────────────────────────
 // Returns history scoped to accounts owned by the authenticated user.
@@ -25,6 +27,7 @@ router.get('/', (req, res) => {
         a_to.name   AS to_name,
         t.amount,
         t.status,
+        t.category,
         t.note,
         t.created_at,
         t.idempotency_key
@@ -45,7 +48,7 @@ router.get('/', (req, res) => {
 // ─── POST /api/transactions ─────────────────────────────────────────────────
 // Executes an atomic transfer between two accounts, verified under req.userId.
 router.post('/', (req, res) => {
-  const { from_account, to_account, amount, note, idempotency_key } = req.body;
+  const { from_account, to_account, amount, category = 'Uncategorized', note, idempotency_key } = req.body;
 
   // 1. Inputs validation
   if (!from_account || !to_account || !amount || !idempotency_key) {
@@ -62,8 +65,11 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Source and destination accounts must differ.' });
   }
 
+  if (!ALLOWED_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: `Invalid category. Must be one of: ${ALLOWED_CATEGORIES.join(', ')}` });
+  }
+
   // 2. Tenant Ownership Verification
-  // Verify that the sender account belongs to the logged-in user.
   const ownSenderAccount = db.prepare(`
     SELECT id FROM accounts WHERE id = ? AND user_id = ?
   `).get(from_account, req.userId);
@@ -83,9 +89,35 @@ router.post('/', (req, res) => {
 
   if (existing) {
     console.log(`[POST /api/transactions] Deduped request — key: ${idempotency_key}`);
+    
+    // Check if there is an active budget to report on deduped request
+    let budgetAlert = null;
+    try {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const budget = db.prepare('SELECT limit_amount FROM budgets WHERE user_id = ? AND category = ? AND month = ?').get(req.userId, category, currentMonth);
+      
+      if (budget && budget.limit_amount > 0) {
+        const spentStats = db.prepare(`
+          SELECT COALESCE(SUM(t.amount), 0) AS total_spent
+          FROM transactions t
+          JOIN accounts a ON a.id = t.from_account
+          WHERE a.user_id = ? AND t.category = ? AND t.status = 'success' AND strftime('%Y-%m', t.created_at) = ?
+        `).get(req.userId, category, currentMonth);
+        
+        const spent = spentStats?.total_spent || 0;
+        budgetAlert = {
+          category,
+          spent,
+          limit_amount: budget.limit_amount,
+          percentUsed: Number(((spent / budget.limit_amount) * 100).toFixed(1)),
+        };
+      }
+    } catch (_) {}
+
     return res.status(200).json({
       deduplicated: true,
       transaction: existing,
+      budgetAlert,
     });
   }
 
@@ -113,9 +145,9 @@ router.post('/', (req, res) => {
 
     // Insert history record
     db.prepare(`
-      INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, note, created_at)
-      VALUES (?, ?, ?, ?, ?, 'success', ?, ?)
-    `).run(txnId, idempotency_key, from_account, to_account, amount, note || null, createdAt);
+      INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, created_at)
+      VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?)
+    `).run(txnId, idempotency_key, from_account, to_account, amount, category, note || null, createdAt);
 
     return {
       id: txnId,
@@ -125,6 +157,7 @@ router.post('/', (req, res) => {
       to_name: receiver.name,
       amount,
       status: 'success',
+      category,
       note: note || null,
       created_at: createdAt,
       from_balance_after: sender.balance - amount,
@@ -134,16 +167,46 @@ router.post('/', (req, res) => {
 
   try {
     const result = performTransfer();
-    return res.status(201).json({ transaction: result });
+
+    // Check budget limit alert
+    let budgetAlert = null;
+    try {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      const budget = db.prepare('SELECT limit_amount FROM budgets WHERE user_id = ? AND category = ? AND month = ?').get(req.userId, category, currentMonth);
+      
+      if (budget && budget.limit_amount > 0) {
+        const spentStats = db.prepare(`
+          SELECT COALESCE(SUM(t.amount), 0) AS total_spent
+          FROM transactions t
+          JOIN accounts a ON a.id = t.from_account
+          WHERE a.user_id = ? AND t.category = ? AND t.status = 'success' AND strftime('%Y-%m', t.created_at) = ?
+        `).get(req.userId, category, currentMonth);
+        
+        const spent = spentStats?.total_spent || 0;
+        budgetAlert = {
+          category,
+          spent,
+          limit_amount: budget.limit_amount,
+          percentUsed: Number(((spent / budget.limit_amount) * 100).toFixed(1)),
+        };
+      }
+    } catch (budgetErr) {
+      console.warn('[Transactions Router] Budget computation failed:', budgetErr.message);
+    }
+
+    return res.status(201).json({
+      transaction: result,
+      budgetAlert,
+    });
   } catch (err) {
     if (err.code === 'INSUFFICIENT_FUNDS') {
       const failedTxnId = 'tx_' + uuidv4().replace(/-/g, '').slice(0, 16);
       const createdAt = new Date().toISOString();
       try {
         db.prepare(`
-          INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, note, created_at)
-          VALUES (?, ?, ?, ?, ?, 'failed', ?, ?)
-        `).run(failedTxnId, idempotency_key, from_account, to_account, amount, note || null, createdAt);
+          INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, created_at)
+          VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)
+        `).run(failedTxnId, idempotency_key, from_account, to_account, amount, category, note || null, createdAt);
       } catch (_) {}
 
       return res.status(400).json({
@@ -157,6 +220,7 @@ router.post('/', (req, res) => {
           to_account,
           amount,
           status: 'failed',
+          category,
           note: note || null,
           created_at: createdAt,
         },

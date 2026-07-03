@@ -1,8 +1,8 @@
 /**
  * db.js — Verdant Finance: SQLite database initialization
  *
- * Scopes accounts and transactions to users. Seeds 5 realistic demo users
- * with preset accounts and transaction histories on first boot.
+ * Scopes accounts, transactions, and budgets to users. Seeds 5 realistic demo users
+ * with preset accounts, transaction histories, and budgets on first boot.
  */
 
 import Database from 'better-sqlite3';
@@ -12,7 +12,7 @@ import { mkdirSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Store the DB file in backend/data/ so Docker volume mounts persist it
+// Store the DB file in data/ so Docker volume mounts persist it
 const DATA_DIR = join(__dirname, '..', 'data');
 const DB_PATH = join(DATA_DIR, 'verdant.db');
 
@@ -53,16 +53,19 @@ db.exec(`
     to_account      TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     amount          INTEGER NOT NULL,
     status          TEXT NOT NULL CHECK(status IN ('pending', 'success', 'failed')),
+    category        TEXT DEFAULT 'Uncategorized',
     note            TEXT,
     created_at      TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    used       INTEGER NOT NULL DEFAULT 0
+  CREATE TABLE IF NOT EXISTS budgets (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category     TEXT NOT NULL,
+    month        TEXT NOT NULL,          -- 'YYYY-MM'
+    limit_amount INTEGER NOT NULL,      -- in paise
+    created_at   TEXT NOT NULL,
+    UNIQUE(user_id, category, month)
   );
 
   CREATE INDEX IF NOT EXISTS idx_transactions_created_at
@@ -73,6 +76,9 @@ db.exec(`
     
   CREATE INDEX IF NOT EXISTS idx_accounts_user
     ON accounts(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_budgets_user_month
+    ON budgets(user_id, month);
 `);
 
 // ─── Seed Demo Users & Accounts ─────────────────────────────────────────────
@@ -80,7 +86,7 @@ db.exec(`
 const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
 
 if (userCount.count === 0) {
-  console.log('🌱 Database is empty. Seeding 5 demo users with accounts and transaction records...');
+  console.log('🌱 Database is empty. Seeding 5 demo users with accounts, budgets, and transactions...');
 
   // Pre-hashed 'password123' using bcrypt (10 rounds)
   const HASHED_PASSWORD = '$2b$10$3EOebDLIX18WCsCPmLm1wuUBd3UcAGKy00RDaMcnzPS2EmD22tME.';
@@ -96,12 +102,18 @@ if (userCount.count === 0) {
   `);
 
   const insertTransaction = db.prepare(`
-    INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, note, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertBudget = db.prepare(`
+    INSERT INTO budgets (id, user_id, category, month, limit_amount, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   const now = new Date();
   const nowMs = now.getTime();
+  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   const demoUsers = [
     { id: 'usr_arjun', name: 'Arjun Mehta', email: 'arjun@verdant.com' },
@@ -120,12 +132,18 @@ if (userCount.count === 0) {
       const checkId = `acc_chk_${u.id.replace('usr_', '')}`;
       const saveId = `acc_svg_${u.id.replace('usr_', '')}`;
 
-      // Alternate balances slightly to make it feel natural
-      const checkingBalance = u.id === 'usr_arjun' ? 4250000 : u.id === 'usr_priya' ? 7820000 : 3100000; // paise
-      const savingsBalance = u.id === 'usr_arjun' ? 11500000 : u.id === 'usr_priya' ? 24500000 : 8900000; // paise
+      const checkingBalance = u.id === 'usr_arjun' ? 4250000 : u.id === 'usr_priya' ? 7820000 : 3100000;
+      const savingsBalance = u.id === 'usr_arjun' ? 11500000 : u.id === 'usr_priya' ? 24500000 : 8900000;
 
       insertAccount.run(checkId, 'Checking', checkingBalance, u.id);
       insertAccount.run(saveId, 'Savings', savingsBalance, u.id);
+
+      // Seed 2 budgets per user (Food and Entertainment) for the current month
+      const foodBudgetId = `bud_food_${u.id.replace('usr_', '')}`;
+      const entBudgetId = `bud_ent_${u.id.replace('usr_', '')}`;
+
+      insertBudget.run(foodBudgetId, u.id, 'Food', currentMonthStr, 1500000, now.toISOString()); // ₹15,000 limit
+      insertBudget.run(entBudgetId, u.id, 'Entertainment', currentMonthStr, 800000, now.toISOString()); // ₹8,000 limit
     }
 
     // Seed transaction ledger entries between seeded accounts
@@ -134,8 +152,9 @@ if (userCount.count === 0) {
         id: 'seed_tx_1',
         from: 'acc_chk_arjun',
         to: 'acc_svg_arjun',
-        amount: 500000, // ₹5,000
+        amount: 500000,
         status: 'success',
+        category: 'Shopping',
         note: 'SIP savings sweep',
         daysAgo: 10,
       },
@@ -143,8 +162,9 @@ if (userCount.count === 0) {
         id: 'seed_tx_2',
         from: 'acc_chk_priya',
         to: 'acc_chk_arjun',
-        amount: 120000, // ₹1,200
+        amount: 120000,
         status: 'success',
+        category: 'Food',
         note: 'Split dinner bill',
         daysAgo: 7,
       },
@@ -152,8 +172,9 @@ if (userCount.count === 0) {
         id: 'seed_tx_3',
         from: 'acc_chk_arjun',
         to: 'acc_chk_rohit',
-        amount: 350000, // ₹3,500
+        amount: 350000,
         status: 'success',
+        category: 'Food',
         note: 'Office lunch pool',
         daysAgo: 4,
       },
@@ -161,8 +182,9 @@ if (userCount.count === 0) {
         id: 'seed_tx_4',
         from: 'acc_svg_kabir',
         to: 'acc_chk_kabir',
-        amount: 1500000, // ₹15,000
+        amount: 1500000,
         status: 'success',
+        category: 'Bills',
         note: 'Quarterly yield payout',
         daysAgo: 3,
       },
@@ -170,8 +192,9 @@ if (userCount.count === 0) {
         id: 'seed_tx_5',
         from: 'acc_chk_ananya',
         to: 'acc_chk_priya',
-        amount: 250000, // ₹2,500
+        amount: 250000,
         status: 'success',
+        category: 'Entertainment',
         note: 'Gifts share',
         daysAgo: 1,
       },
@@ -180,11 +203,11 @@ if (userCount.count === 0) {
     for (const tx of seedTransactions) {
       const ikey = `seed_ikey_${tx.id}`;
       const timeStr = new Date(nowMs - tx.daysAgo * 24 * 60 * 60 * 1000).toISOString();
-      insertTransaction.run(tx.id, ikey, tx.from, tx.to, tx.amount, tx.status, tx.note, timeStr);
+      insertTransaction.run(tx.id, ikey, tx.from, tx.to, tx.amount, tx.status, tx.category, tx.note, timeStr);
     }
   })();
 
-  console.log('✅ Demo users, portfolios, and ledger logs successfully seeded.');
+  console.log('✅ Demo users, portfolios, budgets, and transactions seeded.');
 }
 
 export default db;

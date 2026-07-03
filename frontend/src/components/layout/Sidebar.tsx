@@ -1,10 +1,10 @@
 /**
- * Sidebar.tsx — Desktop navigation sidebar (React Router version)
+ * Sidebar.tsx — Desktop navigation sidebar (React Router version with Budgets link)
  */
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowLeftRight, Settings } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Settings, PieChart } from 'lucide-react';
 import { VerdantLogo } from '../brand/VerdantLogo';
 import { useAuth } from '../../context/AuthContext';
 
@@ -21,6 +21,11 @@ export const Sidebar: React.FC = () => {
       to: '/transactions',
       label: 'Transactions',
       icon: <ArrowLeftRight size={18} strokeWidth={1.75} />,
+    },
+    {
+      to: '/budgets',
+      label: 'Budgets',
+      icon: <PieChart size={18} strokeWidth={1.75} />,
     },
     {
       to: '/settings',

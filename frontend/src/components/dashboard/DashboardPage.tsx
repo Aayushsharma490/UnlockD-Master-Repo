@@ -1,28 +1,60 @@
 /**
  * DashboardPage.tsx — Protected home dashboard view
- * Composes total balance hero, account cards, recent list, and Recharts 7-day volume chart.
+ * Composes total balance hero, account cards, budgets widget, recharts analytics, and timeline lists.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useTransactions } from '../../hooks/useTransactions';
-// formatCurrency not used directly in this page
+import { formatCurrency } from '../../utils/currency';
 import { AccountCard } from '../accounts/AccountCard';
 import { BalanceCounter } from '../accounts/BalanceCounter';
 import { TransactionRow } from '../transactions/TransactionRow';
 import { Link } from 'react-router-dom';
-import { ArrowLeftRight, TrendingUp, Inbox } from 'lucide-react';
+import { ArrowLeftRight, TrendingUp, Inbox, PieChart, AlertTriangle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface DashboardPageProps {
   onOpenTransfer: () => void;
 }
 
+interface BudgetSummaryItem {
+  category: string;
+  limit_amount: number;
+  spent: number;
+  remaining: number;
+  percentUsed: number;
+}
+
 export const DashboardPage: React.FC<DashboardPageProps> = ({ onOpenTransfer }) => {
   const { user } = useAuth();
   const { accounts, isLoading: accountsLoading, error: accountsError } = useAccounts();
   const { transactions, isLoading: txLoading, error: txError } = useTransactions();
+
+  // Budgets summary state
+  const [budgets, setBudgets] = useState<BudgetSummaryItem[]>([]);
+  const [budgetsLoading, setBudgetsLoading] = useState(true);
+
+  const fetchBudgetsSummary = useCallback(async () => {
+    if (!user) return;
+    try {
+      setBudgetsLoading(true);
+      const res = await fetch('/api/budgets');
+      if (res.ok) {
+        const data = await res.json();
+        setBudgets(data.budgets || []);
+      }
+    } catch (_) {
+      console.warn('[Dashboard] Could not fetch budget summaries.');
+    } finally {
+      setBudgetsLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchBudgetsSummary();
+  }, [fetchBudgetsSummary]);
 
   // 1. Greeting
   const greeting = useMemo(() => {
@@ -52,38 +84,39 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onOpenTransfer }) 
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(now.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0]; // YYYY-MM-DD
+      const dateStr = d.toISOString().split('T')[0];
       dayMap[dateStr] = 0;
     }
 
-    // Accumulate total transaction volume (both debits and credits)
-    // for this user's accounts on each date.
-    
     transactions.forEach((tx) => {
-      // Only include successful transfers
       if (tx.status !== 'success') return;
       const txDateStr = tx.created_at.split('T')[0];
       if (dayMap[txDateStr] !== undefined) {
-        // Add to that day's volume
         dayMap[txDateStr] += tx.amount;
       }
     });
 
-    // Convert map to Recharts format
     const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     Object.keys(dayMap).sort().forEach((dateStr) => {
       const d = new Date(dateStr);
       const label = `${weekdayNames[d.getDay()]} ${d.getDate()}`;
       result.push({
         name: label,
-        // Convert paise to rupees for readability in chart y-axis
         volume: dayMap[dateStr] / 100,
         rawDate: dateStr,
       });
     });
 
     return result;
-  }, [transactions, accounts]);
+  }, [transactions]);
+
+  // 5. Select 2-3 categories closest to their limit
+  const activeBudgetsSummary = useMemo(() => {
+    return budgets
+      .filter((b) => b.limit_amount > 0)
+      .sort((a, b) => b.percentUsed - a.percentUsed)
+      .slice(0, 3);
+  }, [budgets]);
 
   return (
     <div className="flex flex-col gap-8 w-full py-6">
@@ -135,28 +168,94 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onOpenTransfer }) 
         </div>
       </section>
 
-      {/* Account Cards row */}
-      <section aria-label="Accounts list">
-        <p className="eyebrow mb-4">Your Portfolios</p>
-        {accountsError ? (
-          <div className="glass-card p-5" style={{ background: 'var(--color-terra-light)', border: '1px solid rgba(181,83,60,0.15)' }}>
-            <p className="text-sm" style={{ color: 'var(--color-terra)' }}>
-              Could not load accounts: {accountsError}
-            </p>
+      {/* Portfolios & Budgets summary split */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Portfolios list (3/5 columns) */}
+        <section aria-label="Accounts list" className="lg:col-span-3 flex flex-col gap-4">
+          <p className="eyebrow">Your Portfolios</p>
+          {accountsError ? (
+            <div className="glass-card p-5 flex-1 flex items-center justify-center bg-[--color-terra-light]" style={{ border: '1px solid rgba(181,83,60,0.15)' }}>
+              <p className="text-sm" style={{ color: 'var(--color-terra)' }}>
+                Could not load accounts: {accountsError}
+              </p>
+            </div>
+          ) : accountsLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+              <div className="glass-card h-40 animate-pulse bg-[--color-border]/30" />
+              <div className="glass-card h-40 animate-pulse bg-[--color-border]/30" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+              {accounts.map((acc, index) => (
+                <AccountCard key={acc.id} account={acc} index={index} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Budgets summary widget (2/5 columns) */}
+        <section aria-label="Budgets widget" className="lg:col-span-2 glass-card p-6 flex flex-col justify-between min-h-[220px]">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <p className="eyebrow mb-1">Envelopes</p>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-[--color-text-muted] m-0">
+                Budgets summary
+              </h3>
+            </div>
+            <Link to="/budgets" className="text-xs font-semibold hover:underline" style={{ color: 'var(--color-green)' }}>
+              View all
+            </Link>
           </div>
-        ) : accountsLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="glass-card h-40 animate-pulse bg-[--color-border]/30" />
-            <div className="glass-card h-40 animate-pulse bg-[--color-border]/30" />
+
+          <div className="flex-1 flex flex-col justify-center gap-3">
+            {budgetsLoading ? (
+              Array.from({ length: 2 }).map((_, idx) => (
+                <div key={idx} className="h-10 animate-pulse bg-[--color-border]/30 rounded-lg" />
+              ))
+            ) : activeBudgetsSummary.length === 0 ? (
+              <div className="flex flex-col items-center justify-center text-center p-4">
+                <PieChart size={20} strokeWidth={1.5} className="text-[--color-text-faint] mb-1.5" />
+                <p className="text-xs m-0" style={{ color: 'var(--color-text-muted)' }}>
+                  No active budgets configured.
+                </p>
+              </div>
+            ) : (
+              activeBudgetsSummary.map((b) => {
+                const isOverLimit = b.percentUsed >= 100;
+                const isNearLimit = b.percentUsed >= 80;
+                const color = isOverLimit ? 'var(--color-terra)' : isNearLimit ? '#C48A54' : 'var(--color-green)';
+
+                return (
+                  <div key={b.category} className="flex flex-col gap-1">
+                    <div className="flex justify-between text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+                      <span className="flex items-center gap-1.5">
+                        {isOverLimit && <AlertTriangle size={12} className="text-[--color-terra]" />}
+                        {b.category}
+                      </span>
+                      <span>
+                        {formatCurrency(b.spent)} / {formatCurrency(b.limit_amount)}
+                      </span>
+                    </div>
+
+                    {/* Progress track */}
+                    <div style={{ width: '100%', height: 4, background: 'rgba(28,27,25,0.06)', borderRadius: 2, overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${Math.min(100, b.percentUsed)}%`,
+                          height: '100%',
+                          background: color,
+                          borderRadius: 2,
+                          transition: 'width 0.4s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {accounts.map((acc, index) => (
-              <AccountCard key={acc.id} account={acc} index={index} />
-            ))}
-          </div>
-        )}
-      </section>
+        </section>
+      </div>
 
       {/* Chart and Recent activity split */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

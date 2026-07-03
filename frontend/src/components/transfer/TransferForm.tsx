@@ -1,8 +1,5 @@
 /**
- * TransferForm.tsx — Money transfer form with multi-user support
- *
- * Handles the complete transfer flow, allowing transfers to either the user's
- * own portfolios (Checking/Savings) or other cultivators in the Verdant system.
+ * TransferForm.tsx — Money transfer form with category support and budget toasts
  */
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
@@ -26,7 +23,7 @@ interface TransferFormProps {
     fromId: string,
     toId: string,
     amountPaise: number
-  ) => () => void; // returns rollback fn
+  ) => () => void;
   onReconcile: (
     fromId: string,
     toId: string,
@@ -40,6 +37,7 @@ interface TransferFormProps {
     realId?: string
   ) => void;
   onClose: () => void;
+  onShowToast?: (message: string) => void;
 }
 
 export const TransferForm: React.FC<TransferFormProps> = ({
@@ -49,17 +47,19 @@ export const TransferForm: React.FC<TransferFormProps> = ({
   onTransactionAdded,
   onTransactionStatusUpdate,
   onClose,
+  onShowToast,
 }) => {
   // ── Form field state ───────────────────────────────────────────────────────
   const [fromAccountId, setFromAccountId] = useState(accounts[0]?.id ?? '');
   const [toAccountId, setToAccountId] = useState(accounts[1]?.id ?? '');
   const [amountInput, setAmountInput] = useState('');
+  const [category, setCategory] = useState('Uncategorized');
   const [note, setNote] = useState('');
   
   // ── Multi-user recipients state ────────────────────────────────────────────
   const [recipients, setRecipients] = useState<Recipient[]>([]);
 
-  // Fetch all recipients belonging to other cultivators on form mount
+  // Fetch recipients on mount
   useEffect(() => {
     fetch('/api/accounts/recipients')
       .then((res) => {
@@ -69,7 +69,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       .then((data) => {
         if (data.recipients) {
           setRecipients(data.recipients);
-          // If the user has only 1 account, default selection to the first recipient
           if (accounts.length <= 1 && data.recipients.length > 0) {
             setToAccountId(data.recipients[0].id);
           }
@@ -100,12 +99,13 @@ export const TransferForm: React.FC<TransferFormProps> = ({
   const validationError = useMemo((): string | null => {
     if (!fromAccountId || !toAccountId) return 'Select both accounts.';
     if (fromAccountId === toAccountId) return 'Source and destination must differ.';
+    if (category === 'Uncategorized') return 'Please select an expense category.';
     if (amountPaise === null || amountPaise <= 0) return 'Enter a valid amount.';
     if (fromAccount && amountPaise > fromAccount.balance) {
       return `Insufficient balance. Available: ₹${(fromAccount.balance / 100).toLocaleString('en-IN')}`;
     }
     return null;
-  }, [fromAccountId, toAccountId, amountPaise, fromAccount]);
+  }, [fromAccountId, toAccountId, category, amountPaise, fromAccount]);
 
   const isLocked = submitState === 'submitting';
 
@@ -116,7 +116,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
 
       if (isLocked || validationError || amountPaise === null) return;
 
-      // Find destination name (could be own account or recipient account)
       const ownToAccount = accounts.find((a) => a.id === toAccountId);
       const recipientToAccount = recipients.find((r) => r.id === toAccountId);
       
@@ -131,7 +130,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       // Step 1: Optimistic update
       const rollback = onOptimisticTransfer(fromAccountId, toAccountId, amountPaise);
 
-      // Step 2: Add a 'pending' transaction to history immediately
+      // Step 2: Add pending transaction
       const tempTxId = `temp_${uuidv4()}`;
       onTransactionAdded({
         id: tempTxId,
@@ -140,6 +139,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         from_name: fromAccount.name,
         to_name: toName,
         amount: amountPaise,
+        category,
         note: note || null,
         created_at: new Date().toISOString(),
       });
@@ -153,6 +153,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
             from_account: fromAccountId,
             to_account: toAccountId,
             amount: amountPaise,
+            category,
             note: note || undefined,
             idempotency_key: idempotencyKey,
           }),
@@ -161,7 +162,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
         const data = await res.json();
 
         if (res.ok) {
-          // Step 4a: Success — reconcile balance
+          // Reconcile balances
           const tx = data.transaction;
           if (tx.from_balance_after !== undefined) {
             onReconcile(
@@ -174,8 +175,16 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           onTransactionStatusUpdate(tempTxId, 'success', tx.id);
           setResultMessage(`₹${(amountPaise / 100).toLocaleString('en-IN')} sent to ${toName}.`);
           setSubmitState('success');
+
+          // Trigger budget alerts if they cross 80% or 100%
+          if (data.budgetAlert && onShowToast) {
+            const { spent, limit_amount, percentUsed } = data.budgetAlert;
+            if (percentUsed >= 80) {
+              const msg = `You've used ${percentUsed}% of your ${category} budget (₹${(spent / 100).toLocaleString('en-IN')} / ₹${(limit_amount / 100).toLocaleString('en-IN')})`;
+              onShowToast(msg);
+            }
+          }
         } else {
-          // Step 4b: Server rejected — roll back
           rollback();
           onTransactionStatusUpdate(tempTxId, 'failed', data.transaction?.id);
           setResultMessage(data.error ?? 'Transfer could not be completed.');
@@ -184,7 +193,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       } catch (networkErr) {
         rollback();
         onTransactionStatusUpdate(tempTxId, 'failed');
-        setResultMessage('Network error — please check your connection and try again.');
+        setResultMessage('Network error — please check connection.');
         setSubmitState('failed');
       }
     },
@@ -197,12 +206,14 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       fromAccount,
       accounts,
       recipients,
+      category,
       note,
       idempotencyKey,
       onOptimisticTransfer,
       onReconcile,
       onTransactionAdded,
       onTransactionStatusUpdate,
+      onShowToast,
     ]
   );
 
@@ -210,6 +221,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     setFromAccountId(accounts[0]?.id ?? '');
     setToAccountId(accounts[1]?.id ?? (recipients[0]?.id ?? ''));
     setAmountInput('');
+    setCategory('Uncategorized');
     setNote('');
     setSubmitState('idle');
     setResultMessage('');
@@ -256,7 +268,6 @@ export const TransferForm: React.FC<TransferFormProps> = ({
               value={fromAccountId}
               onChange={(e) => {
                 setFromAccountId(e.target.value);
-                // Prevent selecting the same account in 'To' if it matches
                 if (e.target.value === toAccountId) {
                   const remaining = accounts.find((a) => a.id !== e.target.value);
                   if (remaining) {
@@ -306,6 +317,28 @@ export const TransferForm: React.FC<TransferFormProps> = ({
                   ))}
                 </optgroup>
               )}
+            </select>
+          </div>
+
+          {/* Category */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="transfer-category" className="eyebrow" style={{ display: 'block' }}>
+              Category
+            </label>
+            <select
+              id="transfer-category"
+              className="verdant-input"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              disabled={isLocked}
+            >
+              <option value="Uncategorized">Select a Category</option>
+              <option value="Food">Food</option>
+              <option value="Transport">Transport</option>
+              <option value="Shopping">Shopping</option>
+              <option value="Bills">Bills</option>
+              <option value="Entertainment">Entertainment</option>
+              <option value="Other">Other</option>
             </select>
           </div>
 

@@ -1,10 +1,10 @@
 /**
- * BottomNav.tsx — Mobile bottom navigation (React Router version)
+ * BottomNav.tsx — Mobile bottom navigation (React Router version with Budgets)
  */
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowLeftRight, Settings } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Settings, PieChart } from 'lucide-react';
 
 export const BottomNav: React.FC = () => {
   const BOTTOM_NAV_ITEMS = [
@@ -17,6 +17,11 @@ export const BottomNav: React.FC = () => {
       to: '/transactions',
       label: 'History',
       icon: <ArrowLeftRight size={20} strokeWidth={1.75} />,
+    },
+    {
+      to: '/budgets',
+      label: 'Budgets',
+      icon: <PieChart size={20} strokeWidth={1.75} />,
     },
     {
       to: '/settings',
@@ -41,7 +46,7 @@ export const BottomNav: React.FC = () => {
         <NavLink
           key={item.to}
           to={item.to}
-          className="flex flex-col items-center gap-1 px-4 py-2 text-decoration-none"
+          className="flex flex-col items-center gap-1 px-3 py-2 text-decoration-none"
           style={({ isActive }) => ({
             color: isActive ? 'var(--color-green)' : 'var(--color-text-muted)',
             background: 'none',

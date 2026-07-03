@@ -1,15 +1,5 @@
 /**
  * TransferModal.tsx — Verdant Finance: Transfer sheet/modal wrapper
- *
- * On mobile (< 768px): slides up from the bottom as a full-width sheet.
- * On desktop (≥ 768px): appears as a centered overlay modal.
- *
- * Uses Framer Motion for entrance/exit animations.
- * The backdrop closes the modal on click.
- *
- * Note on responsive animation: we use a CSS media query approach via
- * a custom hook rather than checking window.innerWidth inline — that would
- * be stale on re-renders after a resize.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -34,6 +24,7 @@ interface TransferModalProps {
     status: 'success' | 'failed',
     realId?: string
   ) => void;
+  onShowToast?: (message: string) => void;
 }
 
 /** Returns true when the viewport is at least 768px wide — reactively updates on resize. */
@@ -58,6 +49,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onReconcile,
   onTransactionAdded,
   onTransactionStatusUpdate,
+  onShowToast,
 }) => {
   const isDesktop = useIsDesktop();
 
@@ -178,16 +170,14 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </div>
               <button
                 onClick={onClose}
-                id="transfer-modal-close-btn"
+                className="p-1 rounded-lg border bg-white/20 hover:bg-white/50 transition-colors"
                 style={{
+                  border: 'none',
                   background: 'none',
-                  border: '1px solid var(--color-border-mid)',
-                  borderRadius: '8px',
-                  padding: '6px 12px',
-                  fontSize: '13px',
-                  color: 'var(--color-text-muted)',
                   cursor: 'pointer',
-                  fontFamily: 'var(--font-ui)',
+                  color: 'var(--color-text-muted)',
+                  fontSize: '18px',
+                  lineHeight: 1,
                 }}
                 aria-label="Close transfer modal"
               >
@@ -195,7 +185,6 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </button>
             </div>
 
-            {/* Form */}
             <TransferForm
               accounts={accounts}
               onClose={onClose}
@@ -203,6 +192,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               onReconcile={onReconcile}
               onTransactionAdded={onTransactionAdded}
               onTransactionStatusUpdate={onTransactionStatusUpdate}
+              onShowToast={onShowToast}
             />
           </motion.div>
         </>

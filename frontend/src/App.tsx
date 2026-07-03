@@ -2,14 +2,15 @@
  * App.tsx — Verdant Finance Route Orchestrator
  *
  * Configures React Router routes for public auth forms and
- * protected dashboard, transactions, and settings layouts.
+ * protected dashboard, transactions, budgets, and settings layouts.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { PublicOnlyRoute } from './components/auth/PublicOnlyRoute';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Auth Pages
 import Login from './components/auth/Login';
@@ -20,6 +21,7 @@ import ResetPassword from './components/auth/ResetPassword';
 // Protected Pages
 import DashboardPage from './components/dashboard/DashboardPage';
 import TransactionsPage from './components/transactions/TransactionsPage';
+import BudgetsPage from './components/budgets/BudgetsPage';
 import Settings from './components/settings/Settings';
 
 // Layout & Modals
@@ -40,22 +42,86 @@ function MainAppRoutes() {
   // Global modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  // Global Toast Alert banner state
+  const [activeToast, setActiveToast] = useState<{ message: string; type: 'warning' | 'info' } | null>(null);
+
+  // Auto-hide toast alerts after 6 seconds
+  useEffect(() => {
+    if (activeToast) {
+      const timer = setTimeout(() => setActiveToast(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeToast]);
+
   // Data hooks (shared with modal)
   const {
     accounts,
     applyOptimisticTransfer,
     reconcileBalances,
+    refetch: refetchAccounts,
   } = useAccounts();
 
   const {
     addPendingTransaction,
     updateTransactionStatus,
+    refetch: refetchTransactions,
   } = useTransactions();
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    // Refresh backend data Authoritatively when modal closes (done button splits)
+    refetchAccounts();
+    refetchTransactions();
+  };
 
   return (
     <BrowserRouter>
+      {/* Toast Alert banner */}
+      <AnimatePresence>
+        {activeToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: -20, x: '-50%' }}
+            transition={{ duration: 0.3 }}
+            style={{
+              position: 'fixed',
+              top: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 100,
+              width: '90%',
+              maxWidth: '400px',
+              background: '#FAF7F2',
+              border: '1px solid rgba(181,83,60,0.3)',
+              boxShadow: '0 10px 30px rgba(181,83,60,0.1)',
+              padding: '16px 20px',
+              borderRadius: '16px',
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[--color-terra]">
+                  Budget Alert
+                </span>
+                <button
+                  onClick={() => setActiveToast(null)}
+                  className="text-xs font-bold border-none bg-transparent cursor-pointer"
+                  style={{ color: 'var(--color-text-muted)', border: 'none', background: 'none' }}
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-xs m-0 leading-relaxed font-medium" style={{ color: 'var(--color-text)' }}>
+                {activeToast.message}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <Routes>
-        {/* Unauthenticated routes (Redirect to /dashboard if logged in) */}
+        {/* Unauthenticated routes */}
         <Route element={<PublicOnlyRoute />}>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -63,9 +129,8 @@ function MainAppRoutes() {
           <Route path="/reset-password/:token" element={<ResetPassword />} />
         </Route>
 
-        {/* Authenticated routes (Redirect to /login if logged out) */}
+        {/* Authenticated routes */}
         <Route element={<ProtectedRoute />}>
-          {/* Main AppShell layout wrapper wraps all dashboard panels */}
           <Route
             path="/"
             element={
@@ -91,6 +156,14 @@ function MainAppRoutes() {
             }
           />
           <Route
+            path="/budgets"
+            element={
+              <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
+                <BudgetsPage />
+              </AppShell>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <AppShell onOpenTransfer={() => setIsModalOpen(true)}>
@@ -108,11 +181,12 @@ function MainAppRoutes() {
       <TransferModal
         isOpen={isModalOpen}
         accounts={accounts}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleCloseModal}
         onOptimisticTransfer={applyOptimisticTransfer}
         onReconcile={reconcileBalances}
         onTransactionAdded={addPendingTransaction}
         onTransactionStatusUpdate={updateTransactionStatus}
+        onShowToast={(msg) => setActiveToast({ message: msg, type: 'warning' })}
       />
     </BrowserRouter>
   );

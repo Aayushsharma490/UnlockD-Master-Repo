@@ -28,6 +28,7 @@ export interface Transaction {
   /** Amount in paise */
   amount: number;
   status: TransactionStatus;
+  category?: string;
   note: string | null;
   created_at: string; // ISO 8601
   idempotency_key?: string | null;
