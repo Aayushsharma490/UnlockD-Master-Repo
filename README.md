@@ -1,121 +1,162 @@
-# Unlock'D Build-a-thon: Official Master Repository
+# 🌿 Verdant — "Money, cultivated."
 
-Welcome to **Unlock'D**, the 24-hour progressive build-a-thon! This repository contains your initial starter code. This guide will walk you through the entire event flow, how to set up your environment, and how to submit your work for judging.
+<p align="center">
+  <img src="https://img.shields.io/badge/Vite-v8.1-2F4F3E?style=for-the-badge&logo=vite&logoColor=FAF7F2" alt="Vite Version" />
+  <img src="https://img.shields.io/badge/React-v19.0-2F4F3E?style=for-the-badge&logo=react&logoColor=FAF7F2" alt="React Version" />
+  <img src="https://img.shields.io/badge/PostgreSQL-v16-2F4F3E?style=for-the-badge&logo=postgresql&logoColor=FAF7F2" alt="PostgreSQL Version" />
+  <img src="https://img.shields.io/badge/Node.js-v22-2F4F3E?style=for-the-badge&logo=node.js&logoColor=FAF7F2" alt="Node.js Version" />
+</p>
 
----
-
-## 🎯 The Challenge: A Personal Finance Application
-You will be building a comprehensive **personal finance and expense management application**. 
-
-- **Creative Freedom:** You have full control over the branding, the name of your product, and the UI/UX design. Get creative!
-- **Secret Features:** The specific core features you must implement are currently classified. You will receive your product roadmap progressively, with new features being revealed as you successfully pass each judging gate.
-
----
-
-## 🏆 1. The Event Workflow
-
-Unlock'D is a unique **24-hour progressive build-a-thon**. You will work in teams, receiving a secret product roadmap and starter code. 
-
-- **Progressive Gates:** You must complete timed development sprints.
-- **Deployment & Validation:** After each sprint, you must package your code and clear a "live judging gate" to unlock the next round.
-- **Exclusive Communication:** All updates, guidelines, and announcements will happen exclusively through our **Discord server**. Keep an eye on the announcements channel!
+Verdant is a secure, state-of-the-art multi-page personal finance ledger and expense management application. Re-engineered with atomic database transactions, strict database check constraints, disk-based upload streaming, and automated sweep schedulers.
 
 ---
 
-## 💻 2. Tech Stack Freedom & The Backend
+## 🎨 Design Aesthetics & Brand
 
-- **Frontend:** Provided as a React + TypeScript + Vite application.
-- **Backend:** **You have COMPLETE FREEDOM to use any backend language or framework.** Whether you prefer Node.js, Python (FastAPI/Flask), Go, Java, or anything else—it is entirely up to you.
-- **Databases:** You can also add any database you prefer (PostgreSQL, MongoDB, MySQL, etc.) by defining it in the provided `docker-compose.yml`.
-
----
-
-## 🐳 3. Mandatory Docker Requirement (Crucial)
-
-**The Dockerfile Rule:** To ensure our judges can run your application locally without dealing with dependency hell, **your submission MUST be fully Dockerized.** 
-
-If the judge cannot build and run your containers, your submission will automatically fail the judgement, and you will not **unlock** the next task!
-
-### How the project is currently Dockerized:
-We have provided a boilerplate Docker setup for you:
-1. **Root `docker-compose.yml`**: Orchestrates both the frontend, backend, and any databases you choose to add.
-2. **`frontend/Dockerfile`**: Already configured to serve your Vite React app on port `5173`.
-3. **`backend/Dockerfile`**: A placeholder. **You must update this file** with the instructions for whatever backend language you choose to build with.
-
-### How to Run the Product:
-To spin up the entire application (both frontend and backend), open your terminal in the root directory and run:
-
-```bash
-docker-compose up -d --build
-```
-*This command will build the images and run your containers in detached mode. You can view your frontend in your browser at `http://localhost:5173`.*
+* **Tagline**: *"Money, cultivated."*
+* **Colors**: 
+  - 🌿 Accent/Positive: `#2F4F3E` (Deep Forest Green)
+  - 🧱 Alert/Negative: `#B5533C` (Muted Terracotta)
+  - 🍦 Background: `#FAF7F2` (Warm Ivory)
+  - 🐈 Charcoal: `#1C1B19` (Charcoal Black)
+* **Aesthetics**: Premium Glassmorphic cards, custom typography, unified color variables, and fluid Micro-Animations using Framer Motion.
+* **No Mock Data**: Every widget, chart, ledger row, and budget tracker is dynamically synced to live PostgreSQL backend endpoints.
 
 ---
 
-## 🚀 4. Integrations, Databases & Bonus Features
+## 🏗️ System Architecture & Workflow
 
-We encourage you to go above and beyond the baseline requirements! As long as you successfully complete the core sprint tasks, you have complete freedom to integrate extra features to "wow" the judges:
+```mermaid
+flowchart TD
+    subgraph Frontend [React SPA client]
+        A[Vite React Client]
+        A --> B[Ledger View / URL Query Params Sync]
+        A --> C[New Transfer Form & Confirmation modal]
+        A --> D[Split Bills Dashboard]
+    end
 
-- **Databases:** You can integrate ANY database (PostgreSQL, MySQL, MongoDB, Redis, etc.). 
-- **Advanced Tech:** Feel free to implement WebSockets for real-time updates, Redis for caching, or integrate AI/ML APIs (like OCR for receipt scanning or LLMs for spending insights).
-- **External APIs:** You can connect to third-party services, webhooks, or open APIs.
+    subgraph Backend [Express API Server]
+        E[Express Server]
+        F[Auth / Rate Limiting]
+        G[Transaction Engine / Row Locking]
+        H[Scheduled Cron Daemon]
+        
+        E --> F
+        E --> G
+        E --> H
+    end
 
-**Crucial Docker Rule for Integrations:** If your integration requires a local service (like a database or Redis cache), **you must not run it separately**. Instead, add it as an additional service in the provided `docker-compose.yml` file. We have left commented-out examples in the `docker-compose.yml` file to show you exactly how to do this.
+    subgraph Database [PostgreSQL Container]
+        I[(PostgreSQL Database)]
+        I --> J[balance >= 0 Constraint]
+        I --> K[idx_accounts_user Index]
+        I --> L[deleted_at Soft Deletes]
+    end
 
----
-
-## 🛠️ 5. Installation & Setup (Fork & Clone)
-
-To keep the main repository pristine and track your team's progress securely, we are using a **Fork-and-Pull Request workflow**.
-
-### Step 1: Fork the Repository
-Navigate to the main UnlockD Repository on GitHub and click the **"Fork"** button in the top right corner. This creates a personal copy of the project under your team's/personal GitHub account.
-
-### Step 2: Clone Your Fork
-Open your terminal and clone your newly created fork onto your local machine:
-```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/UnlockD-Master-Repo.git
-cd UnlockD-Master-Repo
-```
-
-### Step 3: Start the Docker Environment
-Ensure you have **Docker Desktop** installed and running on your machine. Then, execute:
-```bash
-docker-compose up -d --build
+    A -- REST API / cookies --> E
+    E -- Pool Query --> I
 ```
 
 ---
 
-## 📤 6. Submission & Judging Process
+## 📁 PostgreSQL Database Schema
 
-We are not just judging code; we are judging **functionality**.
+### 1. Portfolios & Accounts
+Supports multi-account sweeping and deposits. Balance cannot drop below zero.
+```sql
+CREATE TABLE accounts (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  balance     BIGINT NOT NULL DEFAULT 0 CHECK (balance >= 0), -- Stored in Paise
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  deleted_at  TIMESTAMPTZ
+);
+```
 
-### The PR Submission Workflow:
-When you finish a sprint, you must submit a Pull Request (PR) to the main UnlockD repository.
+### 2. Transaction Audits
+Strict idempotency checks and immutable logs.
+```sql
+CREATE TABLE transactions (
+  id              TEXT PRIMARY KEY,
+  idempotency_key TEXT UNIQUE,
+  from_account    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  to_account      TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  amount          BIGINT NOT NULL,
+  status          TEXT NOT NULL CHECK(status IN ('pending', 'success', 'failed')),
+  category        TEXT DEFAULT 'Uncategorized',
+  note            TEXT,
+  description     TEXT,
+  merchant        TEXT,
+  source          TEXT DEFAULT 'app',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
 
-1. **Create a Feature Branch:** Never work directly on `main`. Always branch off for a sprint.
-   ```bash
-   git checkout -b feature/your-sprint-name
-   ```
-2. **Commit your work:**
-   ```bash
-   git add .
-   git commit -m "feat: completed sprint 1"
-   ```
-3. **Push to your Fork:**
-   ```bash
-   git push origin feature/your-sprint-name
-   ```
-4. **Open a PR:** Go to the main project repository on GitHub and open a Pull Request comparing your feature branch against the main repo.
+### 3. Automated sweeps
+Maintains scheduled sweeping.
+```sql
+CREATE TABLE scheduled_transfers (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_account  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  to_account    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  amount        BIGINT NOT NULL,
+  frequency     TEXT NOT NULL CHECK(frequency IN ('once', 'weekly', 'monthly')),
+  next_run_date TIMESTAMPTZ NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'cancelled', 'completed')),
+  last_run_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
 
-### The PR Template
-You **must** fill out the provided PR template when submitting (Team Name, Features Added, Known Bugs). Incomplete PRs will not be judged.
+---
 
-### Local Judging Process
-- **No Cloud Deployment Required:** You are not required to host your app on AWS, Heroku, or Vercel. 
-- Our judges will pull your PR locally, run `docker-compose up --build`, and test your application directly on their machines.
-- **Standardized Ports:** Ensure your application is configured to expose its web server on the ports specified in your configuration. If you change ports, document it in your PR or README!
+## ⚛️ High-End Fintech Logic
 
-> **Brutally Honest Reminder:** If your submission does not follow these technical guidelines, it will fail the automated "gate check," and your team will not unlock the next task. If you experience technical setup issues, reach out to the organizers on Discord immediately!
+### 1. Atomic Transaction Execution
+All money transfers checkout a connection from the pool and run inside a PostgreSQL transaction (`BEGIN`/`COMMIT`):
+* **Row-Level Lock**: Acquires exclusive locks on sender and receiver rows (`SELECT FOR UPDATE`).
+* **Check constraint**: Database engine guarantees `balance >= 0` check constraint. If balance is insufficient, transaction rolls back and records a `failed` row.
+* **Idempotency**: Client-supplied `idempotency_key` guarantees duplicate actions are deduped.
 
-Good luck, and Happy Building!
+### 2. Automated Scheduled Transfers (Sweeper)
+* A background `node-cron` daemon ticks every minute to scan for due schedules (`next_run_date <= now()`).
+* **Idempotency key generation**: Deterministic unique key formatting `scheduled_[schedule_id]_[scheduled_run_date]` ensures duplicate sweeping is physically blocked.
+* **Date advancement**: Moves `next_run_date` forward (+7 days for weekly, +1 month for monthly, 'completed' status for once).
+
+### 3. Outflow daily limit cap
+* Sums successful outgoing transfers in the last 24 hours.
+* Rejects any transaction that pushes the outflow total above **₹5,00,000/day**.
+
+### 4. Soft Deletes
+* Setting `deleted_at = now()` hides items (accounts, budgets, groups) from frontend query lists (`AND deleted_at IS NULL`), while keeping the full historical transaction records intact for financial audits.
+
+---
+
+## 🚀 Running Locally (Localhost Mode)
+
+To run the application locally on your host machine:
+
+### 1. Start the PostgreSQL Container
+Ensure **Docker Desktop** is running, then start the database container:
+```bash
+docker-compose up db -d
+```
+
+### 2. Launch the Backend Server
+Navigate to the `backend` folder, install dependencies, and start the hot-reload API server:
+```bash
+cd backend
+npm install
+npm run dev
+```
+*Loads environment configurations from `.env` and initializes PostgreSQL tables & seeds on boot.*
+
+### 3. Launch the Frontend Application
+Navigate to the `frontend` folder, install dependencies, and run the development bundle:
+```bash
+cd ../frontend
+npm install
+npm run dev
+```
+*Opens the web app at `http://localhost:5173/` proxying API requests to the backend.*

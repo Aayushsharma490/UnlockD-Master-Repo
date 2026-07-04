@@ -1,10 +1,10 @@
 /**
- * TransferForm.tsx — Money transfer form with category support and budget toasts
+ * TransferForm.tsx — Money transfer form with category support, scheduled transfers, confirmation modal, and budget toasts
  */
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Loader2 } from 'lucide-react';
+import { ArrowRight, Loader2, Check } from 'lucide-react';
 import type { Account, SubmitState, Transaction } from '../../types';
 import { SuccessConfirmation } from './SuccessConfirmation';
 import { rupeesToPaise } from '../../utils/currency';
@@ -55,6 +55,15 @@ export const TransferForm: React.FC<TransferFormProps> = ({
   const [amountInput, setAmountInput] = useState('');
   const [category, setCategory] = useState('Uncategorized');
   const [note, setNote] = useState('');
+  const [frequency, setFrequency] = useState<'once' | 'weekly' | 'monthly'>('once');
+  const [nextRunDate, setNextRunDate] = useState(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  });
+  
+  // ── Confirmation state ─────────────────────────────────────────────────────
+  const [showConfirm, setShowConfirm] = useState(false);
   
   // ── Multi-user recipients state ────────────────────────────────────────────
   const [recipients, setRecipients] = useState<Recipient[]>([]);
@@ -104,16 +113,23 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     if (fromAccount && amountPaise > fromAccount.balance) {
       return `Insufficient balance. Available: ₹${(fromAccount.balance / 100).toLocaleString('en-IN')}`;
     }
+    if (frequency !== 'once') {
+      const parsedDate = new Date(nextRunDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (isNaN(parsedDate.getTime()) || parsedDate.getTime() < today.getTime()) {
+        return 'Next run date must be today or in the future.';
+      }
+    }
     return null;
-  }, [fromAccountId, toAccountId, category, amountPaise, fromAccount]);
+  }, [fromAccountId, toAccountId, category, amountPaise, fromAccount, frequency, nextRunDate]);
 
   const isLocked = submitState === 'submitting';
 
   // ── Submit handler ─────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-
+    async () => {
+      setShowConfirm(false);
       if (isLocked || validationError || amountPaise === null) return;
 
       const ownToAccount = accounts.find((a) => a.id === toAccountId);
@@ -127,6 +143,38 @@ export const TransferForm: React.FC<TransferFormProps> = ({
 
       setSubmitState('submitting');
 
+      if (frequency !== 'once') {
+        // Scheduled transfer execution
+        try {
+          const res = await fetch('/api/scheduled-transfers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from_account: fromAccountId,
+              to_account: toAccountId,
+              amount: amountPaise / 100, // Passed as Rupees value
+              frequency,
+              next_run_date: nextRunDate,
+            }),
+          });
+
+          const data = await res.json();
+
+          if (res.ok) {
+            setResultMessage(`Successfully scheduled ₹${(amountPaise / 100).toLocaleString('en-IN')} transfer to ${toName} (${frequency}).`);
+            setSubmitState('success');
+          } else {
+            setResultMessage(data.error ?? 'Failed to schedule transfer.');
+            setSubmitState('failed');
+          }
+        } catch (err) {
+          setResultMessage('Network error — please check connection.');
+          setSubmitState('failed');
+        }
+        return;
+      }
+
+      // Immediate transfer (once)
       // Step 1: Optimistic update
       const rollback = onOptimisticTransfer(fromAccountId, toAccountId, amountPaise);
 
@@ -209,6 +257,8 @@ export const TransferForm: React.FC<TransferFormProps> = ({
       category,
       note,
       idempotencyKey,
+      frequency,
+      nextRunDate,
       onOptimisticTransfer,
       onReconcile,
       onTransactionAdded,
@@ -217,12 +267,20 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     ]
   );
 
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (validationError || !amountInput) return;
+    setShowConfirm(true);
+  };
+
   const handleReset = useCallback(() => {
     setFromAccountId(accounts[0]?.id ?? '');
     setToAccountId(accounts[1]?.id ?? (recipients[0]?.id ?? ''));
     setAmountInput('');
     setCategory('Uncategorized');
     setNote('');
+    setFrequency('once');
+    setShowConfirm(false);
     setSubmitState('idle');
     setResultMessage('');
     setIdempotencyKey(generateIdempotencyKey());
@@ -236,9 +294,91 @@ export const TransferForm: React.FC<TransferFormProps> = ({
     }
   }, [submitState, onClose, handleReset]);
 
+  // Derived display details for confirmation modal
+  const targetAccountName = useMemo(() => {
+    const own = accounts.find(a => a.id === toAccountId);
+    if (own) return own.name;
+    const rec = recipients.find(r => r.id === toAccountId);
+    return rec ? `${rec.owner_name} (${rec.account_name})` : 'Unknown';
+  }, [accounts, recipients, toAccountId]);
+
   return (
     <AnimatePresence mode="wait">
-      {(submitState === 'success' || submitState === 'failed') ? (
+      {showConfirm ? (
+        <motion.div
+          key="confirmation-modal"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          className="flex flex-col gap-6 px-6 py-6"
+        >
+          <div className="text-center">
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '20px', color: 'var(--color-text)', margin: '0 0 8px 0' }}>
+              Confirm Transfer Details
+            </h3>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)', margin: 0 }}>
+              Please review details before establishing this transfer.
+            </p>
+          </div>
+
+          <div className="glass-card flex flex-col gap-3 p-4 bg-white/20 text-sm">
+            <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+              <span className="text-[--color-text-muted]">From Account</span>
+              <span className="font-semibold text-[--color-text]">{fromAccount?.name}</span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+              <span className="text-[--color-text-muted]">Destination</span>
+              <span className="font-semibold text-[--color-text]">{targetAccountName}</span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+              <span className="text-[--color-text-muted]">Amount</span>
+              <span className="font-bold text-[--color-green]" style={{ fontSize: '15px' }}>
+                ₹{parseFloat(amountInput).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+              <span className="text-[--color-text-muted]">Category</span>
+              <span className="font-semibold text-[--color-text]">{category}</span>
+            </div>
+            <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+              <span className="text-[--color-text-muted]">Frequency</span>
+              <span className="font-semibold text-[--color-text] uppercase tracking-wider text-xs bg-[--color-green-light] text-[--color-green] px-2 py-0.5 rounded">
+                {frequency}
+              </span>
+            </div>
+            {frequency !== 'once' && (
+              <div className="flex justify-between items-center py-1 border-b border-[--color-border]/50">
+                <span className="text-[--color-text-muted]">Next Run Date</span>
+                <span className="font-semibold text-[--color-text]">{nextRunDate}</span>
+              </div>
+            )}
+            {note && (
+              <div className="flex flex-col gap-1 py-1">
+                <span className="text-[--color-text-muted]">Note</span>
+                <span className="font-medium text-[--color-text] italic bg-white/40 p-2 rounded text-xs">"{note}"</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 mt-2">
+            <button
+              onClick={handleSubmit}
+              className="btn-primary w-full"
+              style={{ padding: '12px' }}
+            >
+              <Check size={16} />
+              Confirm & Send
+            </button>
+            <button
+              onClick={() => setShowConfirm(false)}
+              className="btn-secondary w-full"
+              style={{ padding: '12px' }}
+            >
+              Cancel & Modify
+            </button>
+          </div>
+        </motion.div>
+      ) : (submitState === 'success' || submitState === 'failed') ? (
         <SuccessConfirmation
           key="result"
           state={submitState}
@@ -252,7 +392,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          onSubmit={handleSubmit}
+          onSubmit={handleFormSubmit}
           noValidate
           className="flex flex-col gap-5 px-6 py-6"
           aria-label="Transfer funds form"
@@ -319,6 +459,41 @@ export const TransferForm: React.FC<TransferFormProps> = ({
               )}
             </select>
           </div>
+
+          {/* Frequency selector */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="frequency" className="eyebrow" style={{ display: 'block' }}>
+              Frequency
+            </label>
+            <select
+              id="frequency"
+              className="verdant-input"
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value as any)}
+              disabled={isLocked}
+            >
+              <option value="once">Once (Immediate)</option>
+              <option value="weekly">Weekly (Recurring)</option>
+              <option value="monthly">Monthly (Recurring)</option>
+            </select>
+          </div>
+
+          {/* Next run date for scheduled */}
+          {frequency !== 'once' && (
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="next-run-date" className="eyebrow" style={{ display: 'block' }}>
+                Next Run Date
+              </label>
+              <input
+                id="next-run-date"
+                type="date"
+                className="verdant-input"
+                value={nextRunDate}
+                onChange={(e) => setNextRunDate(e.target.value)}
+                disabled={isLocked}
+              />
+            </div>
+          )}
 
           {/* Category */}
           <div className="flex flex-col gap-1.5">
@@ -415,7 +590,7 @@ export const TransferForm: React.FC<TransferFormProps> = ({
               </>
             ) : (
               <>
-                Transfer
+                {frequency === 'once' ? 'Transfer' : 'Schedule Transfer'}
                 <ArrowRight size={16} />
               </>
             )}

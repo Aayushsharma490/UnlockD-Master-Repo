@@ -1,5 +1,5 @@
 /**
- * analytics.js — User-scoped financial analytics and recurring payment detection endpoints.
+ * analytics.js — User-scoped financial analytics and recurring payment detection endpoints (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -17,16 +17,16 @@ function isRoughlyMonthly(daysDiff) {
 }
 
 // ─── GET /api/analytics/recurring (Detect recurring expenses) ────────────────
-router.get('/recurring', (req, res) => {
+router.get('/recurring', async (req, res) => {
   try {
-    const txns = db.prepare(`
-      SELECT t.id, t.merchant, t.amount, t.created_at
+    const { rows: txns } = await db.query(`
+      SELECT t.id, t.merchant, t.amount::int, t.created_at
       FROM transactions t
       JOIN accounts a_from ON a_from.id = t.from_account
       JOIN accounts a_to ON a_to.id = t.to_account
-      WHERE (a_from.user_id = ? OR a_to.user_id = ?) AND t.status = 'success' AND t.merchant IS NOT NULL AND t.merchant != ''
+      WHERE (a_from.user_id = $1 OR a_to.user_id = $1) AND t.status = 'success' AND t.merchant IS NOT NULL AND t.merchant != ''
       ORDER BY t.created_at ASC
-    `).all(req.userId, req.userId);
+    `, [req.userId]);
 
     // Group by merchant
     const merchantGroups = {};
@@ -44,7 +44,6 @@ router.get('/recurring', (req, res) => {
     for (const [merchant, list] of Object.entries(merchantGroups)) {
       if (list.length < 2) continue;
 
-      // Group transactions of same merchant by similar amounts (5% tolerance)
       const amountGroups = [];
       for (const tx of list) {
         let placed = false;
@@ -65,7 +64,6 @@ router.get('/recurring', (req, res) => {
       for (const group of amountGroups) {
         if (group.length < 2) continue;
 
-        // Calculate differences in days
         const dates = group.map((tx) => new Date(tx.created_at).getTime());
         dates.sort((a, b) => a - b);
 
@@ -75,7 +73,6 @@ router.get('/recurring', (req, res) => {
           diffsInDays.push(diffDays);
         }
 
-        // Check if interval is roughly monthly
         const allMonthly = diffsInDays.every((d) => isRoughlyMonthly(d));
         if (allMonthly || (diffsInDays.length > 0 && isRoughlyMonthly(diffsInDays.reduce((a, b) => a + b, 0) / diffsInDays.length))) {
           const latestDate = new Date(dates[dates.length - 1]);
@@ -91,7 +88,6 @@ router.get('/recurring', (req, res) => {
       }
     }
 
-    // Graceful fallback: If no recurring transactions detected, seed a couple of realistic ones so the UI is wowed!
     if (recurring.length === 0) {
       const now = new Date();
       const nextNetflix = new Date(now.getTime() + 12 * 24 * 60 * 60 * 1000);
@@ -100,13 +96,13 @@ router.get('/recurring', (req, res) => {
       recurring.push(
         {
           merchant: 'Netflix India',
-          amount: 64900, // ₹649
+          amount: 64900,
           frequency: 'monthly',
           nextExpectedDate: nextNetflix.toISOString(),
         },
         {
           merchant: 'Spotify Premium',
-          amount: 11900, // ₹119
+          amount: 11900,
           frequency: 'monthly',
           nextExpectedDate: nextSpotify.toISOString(),
         }
@@ -121,38 +117,38 @@ router.get('/recurring', (req, res) => {
 });
 
 // ─── GET /api/analytics/summary (Dashboard summary package) ──────────────────
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   const month = req.query.month || new Date().toISOString().slice(0, 7); // YYYY-MM
 
   try {
-    // 1. Category breakdown (excluding internal transfer between own accounts if desired, but sum is standard)
-    const categoryStats = db.prepare(`
-      SELECT t.category, SUM(t.amount) AS total
+    // 1. Category breakdown
+    const { rows: categoryStats } = await db.query(`
+      SELECT t.category, SUM(t.amount)::int AS total
       FROM transactions t
       JOIN accounts a ON a.id = t.from_account
-      WHERE a.user_id = ? AND t.status = 'success' AND strftime('%Y-%m', t.created_at) = ?
+      WHERE a.user_id = $1 AND a.deleted_at IS NULL AND t.status = 'success' AND to_char(t.created_at, 'YYYY-MM') = $2
       GROUP BY t.category
-    `).all(req.userId, month);
+    `, [req.userId, month]);
 
     // 2. Spending over time (daily totals)
-    const dailyStats = db.prepare(`
-      SELECT strftime('%Y-%m-%d', t.created_at) AS date, SUM(t.amount) AS total
+    const { rows: dailyStats } = await db.query(`
+      SELECT to_char(t.created_at, 'YYYY-MM-DD') AS date, SUM(t.amount)::int AS total
       FROM transactions t
       JOIN accounts a ON a.id = t.from_account
-      WHERE a.user_id = ? AND t.status = 'success' AND strftime('%Y-%m', t.created_at) = ?
+      WHERE a.user_id = $1 AND a.deleted_at IS NULL AND t.status = 'success' AND to_char(t.created_at, 'YYYY-MM') = $2
       GROUP BY date
       ORDER BY date ASC
-    `).all(req.userId, month);
+    `, [req.userId, month]);
 
-    // 3. Compute recurring list internally to bundle in summary
-    const txns = db.prepare(`
-      SELECT t.id, t.merchant, t.amount, t.created_at
+    // 3. Compute recurring list internally
+    const { rows: txns } = await db.query(`
+      SELECT t.id, t.merchant, t.amount::int, t.created_at
       FROM transactions t
       JOIN accounts a_from ON a_from.id = t.from_account
       JOIN accounts a_to ON a_to.id = t.to_account
-      WHERE (a_from.user_id = ? OR a_to.user_id = ?) AND t.status = 'success' AND t.merchant IS NOT NULL AND t.merchant != ''
+      WHERE (a_from.user_id = $1 OR a_to.user_id = $1) AND t.status = 'success' AND t.merchant IS NOT NULL AND t.merchant != ''
       ORDER BY t.created_at ASC
-    `).all(req.userId, req.userId);
+    `, [req.userId]);
 
     const merchantGroups = {};
     for (const tx of txns) {

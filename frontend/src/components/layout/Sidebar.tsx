@@ -19,7 +19,7 @@ export const Sidebar: React.FC = () => {
     },
     {
       to: '/transactions',
-      label: 'Transactions',
+      label: 'Ledger',
       icon: <ArrowLeftRight size={18} strokeWidth={1.75} />,
     },
     {

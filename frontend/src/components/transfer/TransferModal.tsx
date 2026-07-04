@@ -81,7 +81,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     background: '#FDFCF9',
     boxShadow: '0 24px 80px rgba(28,27,25,0.15)',
     zIndex: 50,
-    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   };
 
   // Mobile sheet styles (bottom slide-up)
@@ -95,7 +97,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     background: '#FDFCF9',
     boxShadow: '0 -8px 40px rgba(28,27,25,0.12)',
     zIndex: 50,
-    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   };
 
   return (
@@ -127,6 +131,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             role="dialog"
             aria-modal="true"
             aria-label="Transfer funds"
+            data-lenis-prevent
             style={isDesktop ? desktopPanelStyle : mobilePanelStyle}
             initial={isDesktop
               ? { opacity: 0, scale: 0.95, y: '-48%', x: '-50%' }
@@ -190,15 +195,17 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </button>
             </div>
 
-            <TransferForm
-              accounts={accounts}
-              onClose={onClose}
-              onOptimisticTransfer={onOptimisticTransfer}
-              onReconcile={onReconcile}
-              onTransactionAdded={onTransactionAdded}
-              onTransactionStatusUpdate={onTransactionStatusUpdate}
-              onShowToast={onShowToast}
-            />
+            <div style={{ overflowY: 'auto', flex: 1 }} data-lenis-prevent>
+              <TransferForm
+                accounts={accounts}
+                onClose={onClose}
+                onOptimisticTransfer={onOptimisticTransfer}
+                onReconcile={onReconcile}
+                onTransactionAdded={onTransactionAdded}
+                onTransactionStatusUpdate={onTransactionStatusUpdate}
+                onShowToast={onShowToast}
+              />
+            </div>
           </motion.div>
         </>
       )}

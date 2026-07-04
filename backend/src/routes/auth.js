@@ -1,5 +1,5 @@
 /**
- * auth.js — Auth routes for signup, login, logout, forgot-password, and reset-password
+ * auth.js — Auth routes for signup, login, logout, forgot-password, and reset-password (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -8,11 +8,16 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
+import rateLimit from 'express-rate-limit';
 import db from '../db.js';
-import { authenticateUser } from '../middleware/auth.js';
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'verdant_fallback_secret_key_1337';
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is missing.');
+  process.exit(1);
+}
 
 // Cookie settings for JWT
 const COOKIE_OPTIONS = {
@@ -22,6 +27,19 @@ const COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
 };
 
+function isValidPassword(password) {
+  return password.length >= 8 && /[a-zA-Z]/.test(password) && /[0-9]/.test(password);
+}
+
+// Rate Limiter on login
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 requests per windowMs
+  message: { error: 'Too many login attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ── Signup ──────────────────────────────────────────────────────────────────
 router.post('/signup', async (req, res) => {
   const { name, email, password } = req.body;
@@ -30,113 +48,90 @@ router.post('/signup', async (req, res) => {
     return res.status(400).json({ error: 'Name, email, and password are required.' });
   }
 
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  if (!isValidPassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters long and contain both a letter and a number.' });
   }
 
   try {
     // Check if user already exists
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-    if (existing) {
+    const { rows } = await db.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (rows.length > 0) {
       return res.status(400).json({ error: 'An account with this email already exists.' });
     }
 
-    // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = 'usr_' + uuidv4().replace(/-/g, '').slice(0, 16);
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    // Perform database operations inside a transaction to ensure atomicity
-    const signupTransaction = db.transaction(() => {
+    const client = await db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      
       // 1. Insert user
-      db.prepare(`
+      await client.query(`
         INSERT INTO users (id, name, email, password_hash, created_at, preferences)
-        VALUES (?, ?, ?, ?, ?, '{"compact":false}')
-      `).run(userId, name, email.toLowerCase(), passwordHash, now);
+        VALUES ($1, $2, $3, $4, $5, '{"compact":false}'::jsonb)
+      `, [userId, name, email.toLowerCase(), passwordHash, now]);
 
       // 2. Auto-create Checking and Savings accounts
       const checkingId = 'acc_chk_' + uuidv4().replace(/-/g, '').slice(0, 12);
       const savingsId = 'acc_svg_' + uuidv4().replace(/-/g, '').slice(0, 12);
 
-      const checkingBalance = 4250000; // ₹42,500 in paise
-      const savingsBalance = 11500000; // ₹1,15,000 in paise
+      await client.query(`
+        INSERT INTO accounts (id, name, balance, user_id) VALUES ($1, $2, $3, $4)
+      `, [checkingId, 'Checking', 4250000, userId]); // ₹42,500 in paise
+      
+      await client.query(`
+        INSERT INTO accounts (id, name, balance, user_id) VALUES ($1, $2, $3, $4)
+      `, [savingsId, 'Savings', 11500000, userId]); // ₹1,15,000 in paise
 
-      db.prepare(`
-        INSERT INTO accounts (id, name, balance, user_id)
-        VALUES (?, 'Checking', ?, ?)
-      `).run(checkingId, checkingBalance, userId);
-
-      db.prepare(`
-        INSERT INTO accounts (id, name, balance, user_id)
-        VALUES (?, 'Savings', ?, ?)
-      `).run(savingsId, savingsBalance, userId);
-
-      // 3. Auto-seed 4-5 transactions between Checking and Savings over the past 2 weeks
-      const nowMs = Date.now();
-      const insertTx = db.prepare(`
-        INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, note, created_at)
-        VALUES (?, ?, ?, ?, ?, 'success', ?, ?)
-      `);
-
-      const seededTxns = [
-        {
-          from: checkingId,
-          to: savingsId,
-          amount: 500000, // ₹5,000
-          note: 'Initial monthly savings transfer',
-          daysAgo: 12,
-        },
-        {
-          from: savingsId,
-          to: checkingId,
-          amount: 150000, // ₹1,500
-          note: 'Groceries split',
-          daysAgo: 9,
-        },
-        {
-          from: checkingId,
-          to: savingsId,
-          amount: 1000000, // ₹10,000
-          note: 'Grow Fund sweep',
-          daysAgo: 5,
-        },
-        {
-          from: checkingId,
-          to: savingsId,
-          amount: 250000, // ₹2,500
-          note: 'SIP Investment',
-          daysAgo: 2,
-        },
+      // 3. Seed sample transactions
+      const sampleTxns = [
+        { id: 'tx_init_1', amount: 150000, category: 'Food', note: 'Weekly Groceries', desc: 'Whole Foods Market', merch: 'Whole Foods', daysAgo: 10, isOutflow: true },
+        { id: 'tx_init_2', amount: 50000, category: 'Transport', note: 'Commute refill', desc: 'Uber Ride share', merch: 'Uber', daysAgo: 8, isOutflow: true },
+        { id: 'tx_init_3', amount: 120000, category: 'Shopping', note: 'New books & apparel', desc: 'Amazon Marketplace', merch: 'Amazon', daysAgo: 5, isOutflow: true },
+        { id: 'tx_init_4', amount: 300000, category: 'Other', note: 'Pocket cash sweep', desc: 'Self-Transfer Deposit', merch: 'Self Deposit', daysAgo: 2, isOutflow: false }
       ];
 
-      for (const tx of seededTxns) {
+      for (const t of sampleTxns) {
         const txId = 'tx_' + uuidv4().replace(/-/g, '').slice(0, 16);
-        const txTime = new Date(nowMs - tx.daysAgo * 24 * 60 * 60 * 1000).toISOString();
-        const key = `seed_${txId}`;
-        insertTx.run(txId, key, tx.from, tx.to, tx.amount, tx.note, txTime);
-      }
-    });
+        const ikey = 'ikey_' + uuidv4().replace(/-/g, '').slice(0, 16);
+        const txTime = new Date(Date.now() - t.daysAgo * 24 * 60 * 60 * 1000);
 
-    signupTransaction();
+        const fromAcc = t.isOutflow ? checkingId : savingsId;
+        const toAcc = t.isOutflow ? savingsId : checkingId;
+
+        await client.query(`
+          INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, created_at)
+          VALUES ($1, $2, $3, $4, $5, 'success', $6, $7, $8, $9, $10)
+        `, [txId, ikey, fromAcc, toAcc, t.amount, t.category, t.note, t.desc, t.merch, txTime]);
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Error during transaction processing:', err);
+      throw err;
+    } finally {
+      client.release();
+    }
 
     // Generate JWT
-    const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId, email: email.toLowerCase() }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('token', token, COOKIE_OPTIONS);
 
-    // Set cookie
-    res.cookie('jwt', token, COOKIE_OPTIONS);
-
-    return res.status(201).json({
-      message: 'Account created successfully.',
+    res.status(201).json({
+      message: 'Signup successful.',
       user: { id: userId, name, email: email.toLowerCase() },
     });
   } catch (err) {
-    console.error('[Signup Error]:', err);
-    return res.status(500).json({ error: 'Failed to complete signup.' });
+    console.error('[POST /api/auth/signup] Error:', err);
+    res.status(500).json({ error: 'Failed to create user account.' });
   }
 });
 
 // ── Login ───────────────────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -144,129 +139,132 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-    if (!user) {
-      return res.status(400).json({ error: 'Invalid email or password.' });
+    const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+    const user = rows[0];
+
+    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    const matches = await bcrypt.compare(password, user.password_hash);
-    if (!matches) {
-      return res.status(400).json({ error: 'Invalid email or password.' });
-    }
+    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('token', token, COOKIE_OPTIONS);
 
-    // Generate JWT
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-
-    // Set cookie
-    res.cookie('jwt', token, COOKIE_OPTIONS);
-
-    // Parse preferences
-    let prefs = { compact: false };
-    try {
-      if (user.preferences) prefs = JSON.parse(user.preferences);
-    } catch (_) {}
-
-    return res.json({
+    res.json({
       message: 'Login successful.',
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        preferences: prefs,
-      },
+      user: { id: user.id, name: user.name, email: user.email },
     });
   } catch (err) {
-    console.error('[Login Error]:', err);
-    return res.status(500).json({ error: 'An error occurred during login.' });
+    console.error('[POST /api/auth/login] Error:', err);
+    res.status(500).json({ error: 'Failed to authenticate user.' });
   }
 });
 
 // ── Logout ──────────────────────────────────────────────────────────────────
 router.post('/logout', (req, res) => {
-  res.clearCookie('jwt');
-  return res.json({ message: 'Logged out successfully.' });
+  res.clearCookie('token');
+  res.json({ message: 'Logged out successfully.' });
+});
+
+// ── Get Active Session ──────────────────────────────────────────────────────
+router.get('/me', async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) {
+    // Development bypass - default to Arjun Mehta
+    try {
+      const { rows } = await db.query('SELECT id, name, email, preferences FROM users WHERE id = $1', ['usr_arjun']);
+      if (rows.length > 0) {
+        return res.json({ user: rows[0] });
+      }
+    } catch (_) {}
+    return res.status(401).json({ error: 'No active session.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const { rows } = await db.query('SELECT id, name, email, preferences FROM users WHERE id = $1', [decoded.userId]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'User not found.' });
+    }
+    res.json({ user: rows[0] });
+  } catch (err) {
+    // Development bypass - default to Arjun Mehta
+    try {
+      const { rows } = await db.query('SELECT id, name, email, preferences FROM users WHERE id = $1', ['usr_arjun']);
+      if (rows.length > 0) {
+        return res.json({ user: rows[0] });
+      }
+    } catch (_) {}
+    res.status(401).json({ error: 'Invalid session token.' });
+  }
 });
 
 // ── Forgot Password ─────────────────────────────────────────────────────────
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
-
   if (!email) {
-    return res.status(400).json({ error: 'Email address is required.' });
+    return res.status(400).json({ error: 'Email is required.' });
   }
 
-  const genericResponse = {
-    message: 'If the email matches an account, password reset instructions have been sent.',
-  };
-
   try {
-    const user = db.prepare('SELECT id, name FROM users WHERE email = ?').get(email.toLowerCase());
-    if (!user) {
-      // Don't leak registered accounts — return generic success anyway
-      return res.json(genericResponse);
-    }
+    const { rows } = await db.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+    const genericSuccessMsg = { message: 'If a matching account exists, a password reset link has been sent to your inbox.' };
 
-    // Generate cleartext token
+    if (rows.length === 0) {
+      // Don't leak registered emails, return generic success
+      return res.json(genericSuccessMsg);
+    }
+    const user = rows[0];
+
     const token = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 minutes
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
 
-    // Store in DB
-    const tokenId = uuidv4();
-    db.prepare(`
-      INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, used)
-      VALUES (?, ?, ?, ?, 0)
-    `).run(tokenId, user.id, tokenHash, expiresAt);
+    await db.query(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+      ['tok_' + uuidv4().replace(/-/g, '').slice(0, 16), user.id, tokenHash, expiresAt]
+    );
 
-    const resetLink = `${req.protocol}://${req.get('host')}/reset-password/${token}`;
-    console.log(`[PASSWORD RESET LINK FOR ${email}]: ${resetLink}`);
+    const resetLink = `http://localhost:5173/reset-password/${token}`;
 
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASS;
+    // Gmail SMTP settings
+    const { EMAIL_USER, EMAIL_PASS } = process.env;
 
-    if (!emailUser || !emailPass) {
-      // Graceful fallback for local development/judges
-      console.log('⚠️ Email credentials missing in environment. Returning devResetLink in API response.');
+    if (!EMAIL_USER || !EMAIL_PASS) {
+      console.log('\n[DEVELOPMENT RESET LINK]:', resetLink, '\n');
       return res.json({
-        ...genericResponse,
-        devResetLink: `/reset-password/${token}`, // relative link for client-side routing
+        ...genericSuccessMsg,
+        devResetLink: resetLink, // Expose reset link in response for local test cases
       });
     }
 
-    // Attempt real email send
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
-        user: emailUser,
-        pass: emailPass,
-      },
+      auth: { user: EMAIL_USER, pass: EMAIL_PASS },
     });
 
     const mailOptions = {
-      from: `"Verdant Finance" <${emailUser}>`,
+      from: `"Verdant Finance" <${EMAIL_USER}>`,
       to: email.toLowerCase(),
-      subject: 'Reset your password — Verdant',
+      subject: 'Reset Your Password — Verdant',
       html: `
-        <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #FAF7F2; background-color: #FAF7F2;">
-          <h2 style="color: #2F4F3E; font-family: Georgia, serif;">Verdant</h2>
-          <p>Hi ${user.name},</p>
-          <p>We received a request to reset your password. Click the link below to set a new password. This link is valid for 30 minutes:</p>
-          <p style="margin: 24px 0;">
-            <a href="${resetLink}" style="background-color: #2F4F3E; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 500;">
-              Reset Password
-            </a>
-          </p>
-          <p style="font-size: 12px; color: #6b6375;">If you did not request this, you can safely ignore this email.</p>
+        <div style="font-family: sans-serif; max-width: 500px; padding: 20px; border: 1px solid #E2DEC9; background-color: #FAF7F2; color: #1C1B19;">
+          <h2 style="font-family: serif; color: #2F4F3E;">Verdant</h2>
+          <p>You requested to reset your password. Click the button below to establish a new password:</p>
+          <a href="${resetLink}" style="display: inline-block; background-color: #2F4F3E; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 15px 0;">Reset Password</a>
+          <p style="font-size: 11px; color: #B5533C;">This link expires in 30 minutes.</p>
         </div>
       `,
     };
 
     await transporter.sendMail(mailOptions);
-    return res.json(genericResponse);
+    res.json(genericSuccessMsg);
   } catch (err) {
-    console.error('[Forgot Password Error]:', err);
-    // Even on email send failure, don't crash and return success so we don't block
-    return res.json(genericResponse);
+    console.error('[POST /api/auth/forgot-password] Error:', err);
+    res.status(500).json({ error: 'Failed to process password reset request.' });
   }
 });
 
@@ -278,68 +276,41 @@ router.post('/reset-password', async (req, res) => {
     return res.status(400).json({ error: 'Token and new password are required.' });
   }
 
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  if (!isValidPassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters long and contain both a letter and a number.' });
   }
 
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const tokenRow = db.prepare(`
-      SELECT * FROM password_reset_tokens
-      WHERE token_hash = ? AND used = 0
-    `).get(tokenHash);
+    const { rows } = await db.query(
+      `SELECT * FROM password_reset_tokens WHERE token_hash = $1 AND used = 0 AND expires_at > NOW()`,
+      [tokenHash]
+    );
 
-    if (!tokenRow) {
-      return res.status(400).json({ error: 'Invalid or already used reset token.' });
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired password reset token.' });
     }
+    const tokenRecord = rows[0];
 
-    if (new Date(tokenRow.expires_at) < new Date()) {
-      return res.status(400).json({ error: 'Reset token has expired.' });
-    }
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    // Update password
-    const newHash = await bcrypt.hash(password, 10);
-
-    const resetTransaction = db.transaction(() => {
-      // 1. Update user password
-      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, tokenRow.user_id);
-      // 2. Mark token as used
-      db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(tokenRow.id);
-    });
-
-    resetTransaction();
-
-    return res.json({ message: 'Password reset successfully. You can now log in.' });
-  } catch (err) {
-    console.error('[Reset Password Error]:', err);
-    return res.status(500).json({ error: 'Failed to reset password.' });
-  }
-});
-
-// ── Current User Profile ────────────────────────────────────────────────────
-router.get('/me', authenticateUser, (req, res) => {
-  try {
-    const user = db.prepare('SELECT id, name, email, preferences FROM users WHERE id = ?').get(req.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found.' });
-    }
-
-    let prefs = { compact: false };
+    const client = await db.getPool().connect();
     try {
-      if (user.preferences) prefs = JSON.parse(user.preferences);
-    } catch (_) {}
+      await client.query('BEGIN');
+      await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, tokenRecord.user_id]);
+      await client.query('UPDATE password_reset_tokens SET used = 1 WHERE id = $3', [tokenRecord.id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
-    return res.json({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        preferences: prefs,
-      },
-    });
+    res.json({ message: 'Password reset successful. You may now log in.' });
   } catch (err) {
-    console.error('[Auth Me Error]:', err);
-    return res.status(500).json({ error: 'Failed to retrieve profile.' });
+    console.error('[POST /api/auth/reset-password] Error:', err);
+    res.status(500).json({ error: 'Failed to reset password.' });
   }
 });
 

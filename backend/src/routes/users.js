@@ -1,5 +1,5 @@
 /**
- * users.js — User profile and settings endpoints
+ * users.js — User profile and settings endpoints (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -12,9 +12,13 @@ const router = Router();
 // Apply auth middleware to all endpoints in this file
 router.use(authenticateUser);
 
+function isValidPassword(password) {
+  return password.length >= 8 && /[a-zA-Z]/.test(password) && /[0-9]/.test(password);
+}
+
 // ── PATCH /api/users/me ─────────────────────────────────────────────────────
 // Update user's name
-router.patch('/me', (req, res) => {
+router.patch('/me', async (req, res) => {
   const { name } = req.body;
 
   if (!name || name.trim() === '') {
@@ -22,7 +26,7 @@ router.patch('/me', (req, res) => {
   }
 
   try {
-    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name.trim(), req.userId);
+    await db.query('UPDATE users SET name = $1 WHERE id = $2', [name.trim(), req.userId]);
     return res.json({ message: 'Profile updated successfully.', name: name.trim() });
   } catch (err) {
     console.error('[PATCH /api/users/me Error]:', err);
@@ -39,23 +43,23 @@ router.patch('/me/password', async (req, res) => {
     return res.status(400).json({ error: 'Current password and new password are required.' });
   }
 
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'New password must be at least 8 characters long.' });
+  if (!isValidPassword(newPassword)) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters long and contain both a letter and a number.' });
   }
 
   try {
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.userId);
-    if (!user) {
+    const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.userId]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found.' });
     }
 
-    const matches = await bcrypt.compare(currentPassword, user.password_hash);
+    const matches = await bcrypt.compare(currentPassword, rows[0].password_hash);
     if (!matches) {
       return res.status(400).json({ error: 'Incorrect current password.' });
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.userId);
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.userId]);
 
     return res.json({ message: 'Password updated successfully.' });
   } catch (err) {
@@ -66,7 +70,7 @@ router.patch('/me/password', async (req, res) => {
 
 // ── PATCH /api/users/me/preferences ─────────────────────────────────────────
 // Update preference JSON
-router.patch('/me/preferences', (req, res) => {
+router.patch('/me/preferences', async (req, res) => {
   const { compact } = req.body;
 
   if (compact === undefined || typeof compact !== 'boolean') {
@@ -74,8 +78,8 @@ router.patch('/me/preferences', (req, res) => {
   }
 
   try {
-    const preferencesString = JSON.stringify({ compact });
-    db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(preferencesString, req.userId);
+    const preferencesJson = { compact };
+    await db.query('UPDATE users SET preferences = $1 WHERE id = $2', [JSON.stringify(preferencesJson), req.userId]);
 
     return res.json({
       message: 'Preferences updated successfully.',

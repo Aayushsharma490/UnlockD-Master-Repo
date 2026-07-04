@@ -1,5 +1,5 @@
 /**
- * budgets.js — Budget upsert and computed retrieval endpoints
+ * budgets.js — Budget upsert and computed retrieval endpoints (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -16,7 +16,7 @@ const ALLOWED_CATEGORIES = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertain
 
 // ── GET /api/budgets ────────────────────────────────────────────────────────
 // Returns limits and computed spent statistics for a given month (YYYY-MM)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const now = new Date();
   const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const month = req.query.month || defaultMonth;
@@ -28,26 +28,24 @@ router.get('/', (req, res) => {
 
   try {
     // 1. Fetch user's defined budgets for this month
-    const budgets = db.prepare(`
-      SELECT category, limit_amount
+    const { rows: budgets } = await db.query(`
+      SELECT category, limit_amount::int
       FROM budgets
-      WHERE user_id = ? AND month = ?
-    `).all(req.userId, month);
+      WHERE user_id = $1 AND month = $2 AND deleted_at IS NULL
+    `, [req.userId, month]);
 
     const budgetMap = new Map(budgets.map((b) => [b.category, b.limit_amount]));
 
     // 2. Fetch computed spent values from transactions
-    // Sums all successful transactions debited from the user's accounts
-    // in the given month, grouped by category.
-    const spentStats = db.prepare(`
-      SELECT t.category, COALESCE(SUM(t.amount), 0) AS total_spent
+    const { rows: spentStats } = await db.query(`
+      SELECT t.category, COALESCE(SUM(t.amount), 0)::int AS total_spent
       FROM transactions t
       JOIN accounts a ON a.id = t.from_account
-      WHERE a.user_id = ?
+      WHERE a.user_id = $1 AND a.deleted_at IS NULL
         AND t.status = 'success'
-        AND strftime('%Y-%m', t.created_at) = ?
+        AND to_char(t.created_at, 'YYYY-MM') = $2
       GROUP BY t.category
-    `).all(req.userId, month);
+    `, [req.userId, month]);
 
     const spentMap = new Map(spentStats.map((s) => [s.category, s.total_spent]));
 
@@ -77,7 +75,7 @@ router.get('/', (req, res) => {
 
 // ── POST /api/budgets ───────────────────────────────────────────────────────
 // Create or update a budget limit
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { category, month, limit_amount } = req.body;
 
   if (!category || !limit_amount) {
@@ -96,7 +94,6 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Month must be in YYYY-MM format.' });
   }
 
-  // Parse limit amount to integer (user inputs Rupees, we store Paise)
   const limitPaise = Math.round(Number(limit_amount) * 100);
   if (isNaN(limitPaise) || limitPaise <= 0) {
     return res.status(400).json({ error: 'limit_amount must be a positive number.' });
@@ -104,29 +101,30 @@ router.post('/', (req, res) => {
 
   try {
     const budgetId = uuidv4();
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date();
 
-    // Upsert using SQLite INSERT ON CONFLICT
-    db.prepare(`
+    // Upsert using PostgreSQL INSERT ON CONFLICT
+    await db.query(`
       INSERT INTO budgets (id, user_id, category, month, limit_amount, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT(user_id, category, month) DO UPDATE SET
-        limit_amount = excluded.limit_amount,
-        created_at = excluded.created_at
-    `).run(budgetId, req.userId, category, targetMonth, limitPaise, createdAt);
+        limit_amount = EXCLUDED.limit_amount,
+        created_at = EXCLUDED.created_at,
+        deleted_at = NULL
+    `, [budgetId, req.userId, category, targetMonth, limitPaise, createdAt]);
 
     // Compute live stats for the updated budget to return to frontend
-    const spentStats = db.prepare(`
-      SELECT COALESCE(SUM(t.amount), 0) AS total_spent
+    const spentStats = await db.query(`
+      SELECT COALESCE(SUM(t.amount), 0)::int AS total_spent
       FROM transactions t
       JOIN accounts a ON a.id = t.from_account
-      WHERE a.user_id = ?
+      WHERE a.user_id = $1 AND a.deleted_at IS NULL
         AND t.status = 'success'
-        AND t.category = ?
-        AND strftime('%Y-%m', t.created_at) = ?
-    `).get(req.userId, category, targetMonth);
+        AND t.category = $2
+        AND to_char(t.created_at, 'YYYY-MM') = $3
+    `, [req.userId, category, targetMonth]);
 
-    const spent = spentStats?.total_spent || 0;
+    const spent = spentStats.rows[0]?.total_spent || 0;
     const remaining = Math.max(0, limitPaise - spent);
     const percentUsed = Number(((spent / limitPaise) * 100).toFixed(1));
 

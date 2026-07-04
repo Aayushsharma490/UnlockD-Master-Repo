@@ -341,7 +341,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onOpenTransfer }) 
             ) : recentTransactions.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center py-6 text-center text-[--color-text-faint]">
                 <Inbox size={20} strokeWidth={1.5} className="mb-2" />
-                <p className="text-xs">No transaction history found.</p>
+                <p className="text-xs">No ledger entries found.</p>
               </div>
             ) : (
               <div className="flex flex-col divide-y divide-[--color-border]/60">

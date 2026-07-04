@@ -15,7 +15,7 @@ export const BottomNav: React.FC = () => {
     },
     {
       to: '/transactions',
-      label: 'History',
+      label: 'Ledger',
       icon: <ArrowLeftRight size={20} strokeWidth={1.75} />,
     },
     {

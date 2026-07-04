@@ -1,5 +1,5 @@
 /**
- * accounts.js — User-scoped account endpoints
+ * accounts.js — User-scoped account endpoints (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -12,13 +12,14 @@ const router = Router();
 router.use(authenticateUser);
 
 // GET /api/accounts — returns only the logged-in user's accounts
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const accounts = db.prepare(
-      'SELECT id, name, balance FROM accounts WHERE user_id = ? ORDER BY name ASC'
-    ).all(req.userId);
+    const { rows } = await db.query(
+      'SELECT id, name, balance::INT FROM accounts WHERE user_id = $1 AND deleted_at IS NULL ORDER BY name ASC',
+      [req.userId]
+    );
 
-    res.json({ accounts });
+    res.json({ accounts: rows });
   } catch (err) {
     console.error('[GET /api/accounts] Error:', err);
     res.status(500).json({ error: 'Failed to retrieve accounts.' });
@@ -26,17 +27,17 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/accounts/recipients — returns accounts of OTHER users for transfers
-router.get('/recipients', (req, res) => {
+router.get('/recipients', async (req, res) => {
   try {
-    const recipients = db.prepare(`
+    const { rows } = await db.query(`
       SELECT a.id, a.name AS account_name, u.name AS owner_name
       FROM accounts a
       JOIN users u ON u.id = a.user_id
-      WHERE a.user_id != ?
+      WHERE a.user_id != $1 AND a.deleted_at IS NULL
       ORDER BY u.name ASC, a.name ASC
-    `).all(req.userId);
+    `, [req.userId]);
 
-    res.json({ recipients });
+    res.json({ recipients: rows });
   } catch (err) {
     console.error('[GET /api/accounts/recipients] Error:', err);
     res.status(500).json({ error: 'Failed to retrieve transfer recipients.' });

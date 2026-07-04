@@ -1,5 +1,5 @@
 /**
- * groups.js — User-scoped Groups and Bill Splitting Router
+ * groups.js — User-scoped Groups and Bill Splitting Router (PostgreSQL)
  */
 
 import { Router } from 'express';
@@ -11,21 +11,27 @@ const router = Router();
 router.use(authenticateUser);
 
 // Helper function to recompute optimal settlements (greedy minimum transaction algorithm)
-function calculateOptimalSettlements(groupId) {
-  const members = db.prepare('SELECT id, name FROM group_members WHERE group_id = ?').all(groupId);
+async function calculateOptimalSettlements(groupId) {
+  const { rows: members } = await db.query('SELECT id, name FROM group_members WHERE group_id = $1', [groupId]);
   
   const balances = [];
   for (const m of members) {
-    const paid = db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE group_id = ? AND paid_by = ?').get(groupId, m.id).total;
-    const owed = db.prepare(`
-      SELECT COALESCE(SUM(es.amount_owed), 0) as total 
+    const paidResult = await db.query('SELECT COALESCE(SUM(amount), 0)::int as total FROM expenses WHERE group_id = $1 AND paid_by = $2', [groupId, m.id]);
+    const paid = paidResult.rows[0].total;
+
+    const owedResult = await db.query(`
+      SELECT COALESCE(SUM(es.amount_owed), 0)::int as total 
       FROM expense_splits es
       JOIN expenses e ON e.id = es.expense_id
-      WHERE e.group_id = ? AND es.member_id = ?
-    `).get(groupId, m.id).total;
+      WHERE e.group_id = $1 AND es.member_id = $2
+    `, [groupId, m.id]);
+    const owed = owedResult.rows[0].total;
     
-    const settledSent = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM settlements WHERE group_id = ? AND from_member = ? AND status = 'paid'").get(groupId, m.id).total;
-    const settledRecv = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM settlements WHERE group_id = ? AND to_member = ? AND status = 'paid'").get(groupId, m.id).total;
+    const settledSentResult = await db.query("SELECT COALESCE(SUM(amount), 0)::int as total FROM settlements WHERE group_id = $1 AND from_member = $2 AND status = 'paid'", [groupId, m.id]);
+    const settledSent = settledSentResult.rows[0].total;
+
+    const settledRecvResult = await db.query("SELECT COALESCE(SUM(amount), 0)::int as total FROM settlements WHERE group_id = $1 AND to_member = $2 AND status = 'paid'", [groupId, m.id]);
+    const settledRecv = settledRecvResult.rows[0].total;
 
     const net = (paid + settledRecv) - (owed + settledSent);
     balances.push({ member_id: m.id, name: m.name, net });
@@ -75,30 +81,37 @@ function calculateOptimalSettlements(groupId) {
     if (debtor.net === 0) dIdx++;
   }
 
-  // Delete old pending settlements and write new ones
-  db.transaction(() => {
-    db.prepare("DELETE FROM settlements WHERE group_id = ? AND status = 'pending'").run(groupId);
-    const insertSettlement = db.prepare(`
-      INSERT INTO settlements (id, group_id, from_member, to_member, amount, status)
-      VALUES (?, ?, ?, ?, ?, 'pending')
-    `);
+  const client = await db.getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("DELETE FROM settlements WHERE group_id = $1 AND status = 'pending'", [groupId]);
+    
     for (const s of newSettlements) {
-      insertSettlement.run(s.id, s.group_id, s.from_member, s.to_member, s.amount);
+      await client.query(`
+        INSERT INTO settlements (id, group_id, from_member, to_member, amount, status)
+        VALUES ($1, $2, $3, $4, $5, 'pending')
+      `, [s.id, s.group_id, s.from_member, s.to_member, s.amount]);
     }
-  })();
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error updating settlements:', err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── GET /api/groups ─────────────────────────────────────────────────────────
-// List all groups created by the authenticated user
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const groups = db.prepare(`
+    const { rows } = await db.query(`
       SELECT id, name, created_at
       FROM groups
-      WHERE created_by = ?
+      WHERE created_by = $1 AND deleted_at IS NULL
       ORDER BY created_at DESC
-    `).all(req.userId);
-    res.json({ groups });
+    `, [req.userId]);
+    res.json({ groups: rows });
   } catch (err) {
     console.error('[GET /api/groups]', err);
     res.status(500).json({ error: 'Failed to retrieve groups.' });
@@ -106,60 +119,57 @@ router.get('/', (req, res) => {
 });
 
 // ── POST /api/groups ────────────────────────────────────────────────────────
-// Create new group and populate member names
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name, member_names } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Group name is required.' });
   }
 
+  const groupId = 'gp_' + uuidv4().replace(/-/g, '').slice(0, 16);
+  const createdAt = new Date();
+
+  const client = await db.getPool().connect();
   try {
-    const groupId = 'gp_' + uuidv4().replace(/-/g, '').slice(0, 16);
-    const createdAt = new Date().toISOString();
+    await client.query('BEGIN');
+    await client.query(`
+      INSERT INTO groups (id, name, created_by, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [groupId, name, req.userId, createdAt]);
 
-    db.transaction(() => {
-      db.prepare(`
-        INSERT INTO groups (id, name, created_by, created_at)
-        VALUES (?, ?, ?, ?)
-      `).run(groupId, name, req.userId, createdAt);
-
-      // Add default members if specified
-      if (Array.isArray(member_names)) {
-        const insertMem = db.prepare('INSERT INTO group_members (id, group_id, name) VALUES (?, ?, ?)');
-        for (const mName of member_names) {
-          if (mName && mName.trim()) {
-            const memId = 'gpm_' + uuidv4().replace(/-/g, '').slice(0, 16);
-            insertMem.run(memId, groupId, mName.trim());
-          }
+    if (Array.isArray(member_names)) {
+      for (const mName of member_names) {
+        if (mName && mName.trim()) {
+          const memId = 'gpm_' + uuidv4().replace(/-/g, '').slice(0, 16);
+          await client.query('INSERT INTO group_members (id, group_id, name) VALUES ($1, $2, $3)', [memId, groupId, mName.trim()]);
         }
       }
-    })();
-
-    res.status(201).json({ group: { id: groupId, name, created_at: createdAt } });
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ group: { id: groupId, name, created_at: createdAt.toISOString() } });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('[POST /api/groups]', err);
     res.status(500).json({ error: 'Failed to create group.' });
+  } finally {
+    client.release();
   }
 });
 
 // ── POST /api/groups/:id/members ────────────────────────────────────────────
-// Add a member to a group
-router.post('/:id/members', (req, res) => {
+router.post('/:id/members', async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Member name is required.' });
   }
 
   try {
-    // Verify user owns the group
-    const group = db.prepare('SELECT id FROM groups WHERE id = ? AND created_by = ?').get(req.params.id, req.userId);
-    if (!group) return res.status(403).json({ error: 'Unauthorized.' });
+    const groupResult = await db.query('SELECT id FROM groups WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL', [req.params.id, req.userId]);
+    if (groupResult.rows.length === 0) return res.status(403).json({ error: 'Unauthorized.' });
 
     const memId = 'gpm_' + uuidv4().replace(/-/g, '').slice(0, 16);
-    db.prepare('INSERT INTO group_members (id, group_id, name) VALUES (?, ?, ?)').run(memId, group.id, name.trim());
+    await db.query('INSERT INTO group_members (id, group_id, name) VALUES ($1, $2, $3)', [memId, req.params.id, name.trim()]);
 
-    // Recompute settlements immediately
-    calculateOptimalSettlements(group.id);
+    await calculateOptimalSettlements(req.params.id);
 
     res.status(201).json({ member: { id: memId, name: name.trim() } });
   } catch (err) {
@@ -169,9 +179,8 @@ router.post('/:id/members', (req, res) => {
 });
 
 // ── POST /api/groups/:id/expenses ───────────────────────────────────────────
-// Create a new expense inside a group and split it
-router.post('/:id/expenses', (req, res) => {
-  const { paid_by, amount, description, split_type, splits } = req.body;
+router.post('/:id/expenses', async (req, res) => {
+  const { paid_by, amount, description, split_type, splits, category = 'Other' } = req.body;
 
   if (!paid_by || !amount || !split_type) {
     return res.status(400).json({ error: 'Missing required parameters: paid_by, amount, split_type.' });
@@ -183,10 +192,11 @@ router.post('/:id/expenses', (req, res) => {
   }
 
   try {
-    const group = db.prepare('SELECT id FROM groups WHERE id = ? AND created_by = ?').get(req.params.id, req.userId);
-    if (!group) return res.status(403).json({ error: 'Unauthorized.' });
+    const groupResult = await db.query('SELECT id, name FROM groups WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL', [req.params.id, req.userId]);
+    if (groupResult.rows.length === 0) return res.status(403).json({ error: 'Unauthorized.' });
+    const group = groupResult.rows[0];
 
-    const members = db.prepare('SELECT id FROM group_members WHERE group_id = ?').all(group.id);
+    const { rows: members } = await db.query('SELECT id, name FROM group_members WHERE group_id = $1', [group.id]);
     const memberIds = members.map((m) => m.id);
 
     if (!memberIds.includes(paid_by)) {
@@ -194,7 +204,7 @@ router.post('/:id/expenses', (req, res) => {
     }
 
     const expId = 'exp_' + uuidv4().replace(/-/g, '').slice(0, 16);
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date();
 
     let computedSplits = [];
 
@@ -237,28 +247,31 @@ router.post('/:id/expenses', (req, res) => {
       return res.status(400).json({ error: 'Invalid split_type.' });
     }
 
-    const expenseCategory = req.body.category || 'Other';
-
-    // Insert expense and splits
-    db.transaction(() => {
-      db.prepare(`
+    const client = await db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
         INSERT INTO expenses (id, group_id, paid_by, amount, description, split_type, category, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(expId, group.id, paid_by, amountPaise, description || null, split_type, expenseCategory, createdAt);
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `, [expId, group.id, paid_by, amountPaise, description || null, split_type, category, createdAt]);
 
-      const insertSplit = db.prepare('INSERT INTO expense_splits (id, expense_id, member_id, amount_owed) VALUES (?, ?, ?, ?)');
       for (const s of computedSplits) {
         const splitId = 'spl_' + uuidv4().replace(/-/g, '').slice(0, 16);
-        insertSplit.run(splitId, expId, s.member_id, s.amount_owed);
+        await client.query(`
+          INSERT INTO expense_splits (id, expense_id, member_id, amount_owed)
+          VALUES ($1, $2, $3, $4)
+        `, [splitId, expId, s.member_id, s.amount_owed]);
       }
 
       // INTEGRATION: Payer's own share counts as a real transaction against their budget
-      const payerMember = db.prepare('SELECT name FROM group_members WHERE id = ?').get(paid_by);
-      if (payerMember) {
-        const registeredUser = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(payerMember.name);
-        if (registeredUser) {
-          const userChecking = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(registeredUser.id);
-          if (userChecking) {
+      const payerName = members.find(m => m.id === paid_by)?.name;
+      if (payerName) {
+        const userResult = await client.query('SELECT id FROM users WHERE LOWER(name) = LOWER($1)', [payerName]);
+        if (userResult.rows.length > 0) {
+          const userId = userResult.rows[0].id;
+          const accResult = await client.query("SELECT id FROM accounts WHERE user_id = $1 AND name = 'Checking' AND deleted_at IS NULL", [userId]);
+          
+          if (accResult.rows.length > 0) {
             const payerSplit = computedSplits.find(s => s.member_id === paid_by);
             const payerShareAmount = payerSplit ? payerSplit.amount_owed : 0;
 
@@ -266,29 +279,35 @@ router.post('/:id/expenses', (req, res) => {
               const txId = 'tx_exp_' + uuidv4().replace(/-/g, '').slice(0, 16);
               const ikey = 'ikey_exp_' + uuidv4().replace(/-/g, '').slice(0, 16);
 
-              db.prepare(`
+              await client.query(`
                 INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, source, created_at)
-                VALUES (?, ?, ?, ?, ?, 'success', ?, ?, ?, ?, 'app', ?)
-              `).run(
+                VALUES ($1, $2, $3, $4, $5, 'success', $6, $7, $8, $9, 'app', $10)
+              `, [
                 txId,
                 ikey,
-                userChecking.id,
+                accResult.rows[0].id,
                 'acc_ext_imported',
                 payerShareAmount,
-                expenseCategory,
+                category,
                 'Group Expense Share',
                 description || 'Group Expense share',
                 `Group: ${group.name}`,
                 createdAt
-              );
+              ]);
             }
           }
         }
       }
-    })();
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('Error inserting expense transaction:', err);
+      throw err;
+    } finally {
+      client.release();
+    }
 
-    // Recompute optimal settlements
-    calculateOptimalSettlements(group.id);
+    await calculateOptimalSettlements(group.id);
 
     res.status(201).json({ message: 'Expense added and splits recorded.' });
   } catch (err) {
@@ -298,50 +317,56 @@ router.post('/:id/expenses', (req, res) => {
 });
 
 // ── GET /api/groups/:id ─────────────────────────────────────────────────────
-// Retrieve all members, expenses, net balances, and settlements for a group
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const group = db.prepare('SELECT id, name, created_at FROM groups WHERE id = ? AND created_by = ?').get(req.params.id, req.userId);
-    if (!group) return res.status(404).json({ error: 'Group not found.' });
+    const groupResult = await db.query('SELECT id, name, created_at FROM groups WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL', [req.params.id, req.userId]);
+    if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found.' });
+    const group = groupResult.rows[0];
 
-    const members = db.prepare('SELECT id, name FROM group_members WHERE group_id = ?').all(group.id);
-    const expenses = db.prepare(`
-      SELECT e.id, e.paid_by, gm.name AS payer_name, e.amount, e.description, e.split_type, e.created_at
+    const { rows: members } = await db.query('SELECT id, name FROM group_members WHERE group_id = $1', [group.id]);
+    const { rows: expenses } = await db.query(`
+      SELECT e.id, e.paid_by, gm.name AS payer_name, e.amount::int, e.description, e.split_type, e.created_at
       FROM expenses e
       JOIN group_members gm ON gm.id = e.paid_by
-      WHERE e.group_id = ?
+      WHERE e.group_id = $1
       ORDER BY e.created_at DESC
-    `).all(group.id);
+    `, [group.id]);
 
-    const settlements = db.prepare(`
-      SELECT s.id, s.from_member, gm_from.name AS from_name, s.to_member, gm_to.name AS to_name, s.amount, s.status, s.paid_at
+    const { rows: settlements } = await db.query(`
+      SELECT s.id, s.from_member, gm_from.name AS from_name, s.to_member, gm_to.name AS to_name, s.amount::int, s.status, s.paid_at
       FROM settlements s
       JOIN group_members gm_from ON gm_from.id = s.from_member
       JOIN group_members gm_to   ON gm_to.id   = s.to_member
-      WHERE s.group_id = ?
-    `).all(group.id);
+      WHERE s.group_id = $1
+    `, [group.id]);
 
-    // Compute net running balances for each member
-    const memberBalances = members.map((m) => {
-      const paid = db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE group_id = ? AND paid_by = ?').get(group.id, m.id).total;
-      const owed = db.prepare(`
-        SELECT COALESCE(SUM(es.amount_owed), 0) as total 
+    // Compute net balances
+    const memberBalances = [];
+    for (const m of members) {
+      const paidResult = await db.query('SELECT COALESCE(SUM(amount), 0)::int as total FROM expenses WHERE group_id = $1 AND paid_by = $2', [group.id, m.id]);
+      const paid = paidResult.rows[0].total;
+
+      const owedResult = await db.query(`
+        SELECT COALESCE(SUM(es.amount_owed), 0)::int as total 
         FROM expense_splits es
         JOIN expenses e ON e.id = es.expense_id
-        WHERE e.group_id = ? AND es.member_id = ?
-      `).get(group.id, m.id).total;
+        WHERE e.group_id = $1 AND es.member_id = $2
+      `, [group.id, m.id]);
+      const owed = owedResult.rows[0].total;
 
-      const settledSent = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM settlements WHERE group_id = ? AND from_member = ? AND status = 'paid'").get(group.id, m.id).total;
-      const settledRecv = db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM settlements WHERE group_id = ? AND to_member = ? AND status = 'paid'").get(group.id, m.id).total;
+      const settledSentResult = await db.query("SELECT COALESCE(SUM(amount), 0)::int as total FROM settlements WHERE group_id = $1 AND from_member = $2 AND status = 'paid'", [group.id, m.id]);
+      const settledSent = settledSentResult.rows[0].total;
+
+      const settledRecvResult = await db.query("SELECT COALESCE(SUM(amount), 0)::int as total FROM settlements WHERE group_id = $1 AND to_member = $2 AND status = 'paid'", [group.id, m.id]);
+      const settledRecv = settledRecvResult.rows[0].total;
 
       const net = (paid + settledRecv) - (owed + settledSent);
-
-      return {
+      memberBalances.push({
         id: m.id,
         name: m.name,
         net_balance: net,
-      };
-    });
+      });
+    }
 
     res.json({
       group,
@@ -356,71 +381,78 @@ router.get('/:id', (req, res) => {
 });
 
 // ── PATCH /api/settlements/:id ──────────────────────────────────────────────
-// Mark settlement paid
-router.patch('/settlements/:id', (req, res) => {
+router.patch('/settlements/:id', async (req, res) => {
   const { status } = req.body;
   if (status !== 'paid') {
     return res.status(400).json({ error: 'Status can only be updated to paid.' });
   }
 
   try {
-    const settlement = db.prepare('SELECT group_id FROM settlements WHERE id = ?').get(req.params.id);
-    if (!settlement) return res.status(404).json({ error: 'Settlement not found.' });
+    const settlementResult = await db.query('SELECT group_id, amount::int, from_member, to_member FROM settlements WHERE id = $1', [req.params.id]);
+    if (settlementResult.rows.length === 0) return res.status(404).json({ error: 'Settlement not found.' });
+    const settlement = settlementResult.rows[0];
 
-    // Verify creator ownership
-    const group = db.prepare('SELECT id FROM groups WHERE id = ? AND created_by = ?').get(settlement.group_id, req.userId);
-    if (!group) return res.status(403).json({ error: 'Unauthorized.' });
+    const groupResult = await db.query('SELECT id, name FROM groups WHERE id = $1 AND created_by = $2 AND deleted_at IS NULL', [settlement.group_id, req.userId]);
+    if (groupResult.rows.length === 0) return res.status(403).json({ error: 'Unauthorized.' });
+    const group = groupResult.rows[0];
 
-    const paidAt = new Date().toISOString();
+    const paidAt = new Date();
 
-    const settlementDetails = db.prepare(`
-      SELECT s.group_id, s.amount, s.from_member, s.to_member, g.name AS group_name,
-             gm_from.name AS from_name, gm_to.name AS to_name
-      FROM settlements s
-      JOIN groups g ON g.id = s.group_id
-      JOIN group_members gm_from ON gm_from.id = s.from_member
-      JOIN group_members gm_to ON gm_to.id = s.to_member
-      WHERE s.id = ?
-    `).get(req.params.id);
+    const fromMemResult = await db.query('SELECT name FROM group_members WHERE id = $1', [settlement.from_member]);
+    const toMemResult = await db.query('SELECT name FROM group_members WHERE id = $1', [settlement.to_member]);
+    
+    if (fromMemResult.rows.length > 0 && toMemResult.rows.length > 0) {
+      const fromName = fromMemResult.rows[0].name;
+      const toName = toMemResult.rows[0].name;
 
-    if (settlementDetails) {
-      const userFrom = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(settlementDetails.from_name);
-      const userTo = db.prepare('SELECT id FROM users WHERE LOWER(name) = LOWER(?)').get(settlementDetails.to_name);
+      const userFromResult = await db.query('SELECT id FROM users WHERE LOWER(name) = LOWER($1)', [fromName]);
+      const userToResult = await db.query('SELECT id FROM users WHERE LOWER(name) = LOWER($1)', [toName]);
 
-      if (userFrom && userTo) {
-        const accFrom = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(userFrom.id);
-        const accTo = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND name = 'Checking'").get(userTo.id);
+      if (userFromResult.rows.length > 0 && userToResult.rows.length > 0) {
+        const uFrom = userFromResult.rows[0].id;
+        const uTo = userToResult.rows[0].id;
 
-        if (accFrom && accTo) {
-          db.transaction(() => {
-            db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(settlementDetails.amount, accFrom.id);
-            db.prepare('UPDATE accounts SET balance = balance + ? WHERE id = ?').run(settlementDetails.amount, accTo.id);
+        const accFromResult = await db.query("SELECT id FROM accounts WHERE user_id = $1 AND name = 'Checking' AND deleted_at IS NULL", [uFrom]);
+        const accToResult = await db.query("SELECT id FROM accounts WHERE user_id = $1 AND name = 'Checking' AND deleted_at IS NULL", [uTo]);
+
+        if (accFromResult.rows.length > 0 && accToResult.rows.length > 0) {
+          const client = await db.getPool().connect();
+          try {
+            await client.query('BEGIN');
+            await client.query('UPDATE accounts SET balance = balance - $1 WHERE id = $2', [settlement.amount, accFromResult.rows[0].id]);
+            await client.query('UPDATE accounts SET balance = balance + $1 WHERE id = $2', [settlement.amount, accToResult.rows[0].id]);
 
             const txId = 'tx_set_' + uuidv4().replace(/-/g, '').slice(0, 16);
             const ikey = 'ikey_set_' + uuidv4().replace(/-/g, '').slice(0, 16);
 
-            db.prepare(`
+            await client.query(`
               INSERT INTO transactions (id, idempotency_key, from_account, to_account, amount, status, category, note, description, merchant, source, created_at)
-              VALUES (?, ?, ?, ?, ?, 'success', 'Settlement', 'Group Settlement', ?, ?, 'app', ?)
-            `).run(
+              VALUES ($1, $2, $3, $4, $5, 'success', 'Settlement', 'Group Settlement', $6, $7, 'app', $8)
+            `, [
               txId,
               ikey,
-              accFrom.id,
-              accTo.id,
-              settlementDetails.amount,
-              `Settled dues in group: ${settlementDetails.group_name}`,
-              settlementDetails.to_name,
+              accFromResult.rows[0].id,
+              accToResult.rows[0].id,
+              settlement.amount,
+              `Settled dues in group: ${group.name}`,
+              toName,
               paidAt
-            );
-          })();
+            ]);
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Error executing settlement transfer:', err);
+            throw err;
+          } finally {
+            client.release();
+          }
         }
       }
     }
 
-    db.prepare("UPDATE settlements SET status = 'paid', paid_at = ? WHERE id = ?").run(paidAt, req.params.id);
+    await db.query("UPDATE settlements SET status = 'paid', paid_at = $1 WHERE id = $2", [paidAt, req.params.id]);
 
-    // Recompute settlements immediately (paid settlements reduce net balance)
-    calculateOptimalSettlements(group.id);
+    await calculateOptimalSettlements(group.id);
 
     res.json({ message: 'Settlement marked as paid.' });
   } catch (err) {

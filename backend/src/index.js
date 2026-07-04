@@ -5,6 +5,11 @@
  * routing layers for auth, accounts, transactions, budgets, groups, and user profiles.
  */
 
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is missing.');
+  process.exit(1);
+}
+
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -16,9 +21,10 @@ import usersRouter from './routes/users.js';
 import budgetsRouter from './routes/budgets.js';
 import groupsRouter from './routes/groups.js';
 import analyticsRouter from './routes/analytics.js';
+import scheduledTransfersRouter from './routes/scheduledTransfers.js';
 
-// Import db to trigger database schema creation
-import './db.js';
+import { initDb } from './db.js';
+import { startScheduler } from './scheduler.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -48,6 +54,7 @@ app.use('/api/users', usersRouter);
 app.use('/api/budgets', budgetsRouter);
 app.use('/api/groups', groupsRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/scheduled-transfers', scheduledTransfersRouter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -71,7 +78,13 @@ app.use((err, req, res, _next) => {
 
 // ── Start ───────────────────────────────────────────────────────────────────
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🌿 Verdant Finance API running on http://localhost:${PORT}`);
-  console.log(`   Health check: http://localhost:${PORT}/health\n`);
+initDb().then(() => {
+  startScheduler();
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🌿 Verdant Finance API running on http://localhost:${PORT}`);
+    console.log(`   Health check: http://localhost:${PORT}/health\n`);
+  });
+}).catch((err) => {
+  console.error('Failed to initialize database. Server exiting.', err);
+  process.exit(1);
 });
